@@ -98,18 +98,28 @@ export default class InteractiveHeartbeatPage extends Component {
     this.error = null;
 
     try {
-      const [config, sessions] = await Promise.all([
-        ajax("/interactive-heartbeat/api/config"),
-        ajax("/interactive-heartbeat/api/sessions"),
-      ]);
-      this.config = config;
+      this.config = await ajax("/interactive-heartbeat/api/config");
+    } catch (error) {
+      this.config = null;
+      this.sessions = [];
+      this.error = errorMessage(
+        error,
+        t("interactive_heartbeat.errors.config_load_failed"),
+      );
+      this.loading = false;
+      return;
+    }
+
+    try {
+      const sessions = await ajax("/interactive-heartbeat/api/sessions");
       this.sessions = (sessions?.sessions || []).map((session) =>
         this.decorateSession(session),
       );
     } catch (error) {
+      this.sessions = [];
       this.error = errorMessage(
         error,
-        t("interactive_heartbeat.errors.load_failed"),
+        t("interactive_heartbeat.errors.sessions_load_failed"),
       );
     } finally {
       this.loading = false;
@@ -253,22 +263,24 @@ export default class InteractiveHeartbeatPage extends Component {
           <p>{{t "interactive_heartbeat.loading"}}</p>
         </div>
       {{else}}
-        {{#unless this.config.heartrate_runtime_ready}}
-          <div
-            class="interactive-heartbeat__alert interactive-heartbeat__alert--warning"
-          >
-            Interactive Heartbeat requires the Heartrate plugin's asynchronous
-            current readings to be enabled.
-          </div>
-        {{/unless}}
+        {{#if this.config}}
+          {{#unless this.config.heartrate_runtime_ready}}
+            <div
+              class="interactive-heartbeat__alert interactive-heartbeat__alert--warning"
+            >
+              Interactive Heartbeat requires the Heartrate plugin's asynchronous
+              current readings to be enabled.
+            </div>
+          {{/unless}}
 
-        {{#unless this.config.lovense_configured}}
-          <div
-            class="interactive-heartbeat__alert interactive-heartbeat__alert--warning"
-          >
-            {{t "interactive_heartbeat.lovense.not_configured"}}
-          </div>
-        {{/unless}}
+          {{#unless this.config.lovense_configured}}
+            <div
+              class="interactive-heartbeat__alert interactive-heartbeat__alert--warning"
+            >
+              {{t "interactive_heartbeat.lovense.not_configured"}}
+            </div>
+          {{/unless}}
+        {{/if}}
 
         <section class="interactive-heartbeat__card">
           <div class="interactive-heartbeat__card-header">

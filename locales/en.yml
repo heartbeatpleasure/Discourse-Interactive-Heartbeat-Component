@@ -9,6 +9,8 @@ en:
     loading: "Loading Interactive Heartbeat…"
     errors:
       load_failed: "Interactive Heartbeat could not be loaded. Please refresh the page or contact staff."
+      config_load_failed: "Interactive Heartbeat configuration could not be loaded. Please refresh the page or contact staff."
+      sessions_load_failed: "Your Interactive Heartbeat sessions could not be loaded. Please refresh the page or contact staff."
       session_load_failed: "This private session could not be loaded."
       user_search_failed: "Members could not be searched."
       create_failed: "The private session could not be created."
