@@ -1,0 +1,348 @@
+.interactive-heartbeat {
+  width: min(1180px, calc(100% - 2rem));
+  margin: 1.5rem auto 3rem;
+  color: var(--primary);
+}
+
+.interactive-heartbeat__hero,
+.interactive-heartbeat__card {
+  background: var(--secondary);
+  border: 1px solid var(--primary-low);
+  border-radius: 18px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+.interactive-heartbeat__hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 2rem;
+  margin-bottom: 1rem;
+
+  h1 {
+    margin: 0 0 0.5rem;
+    font-size: clamp(2rem, 5vw, 3.25rem);
+    line-height: 1;
+  }
+
+  p {
+    max-width: 760px;
+    margin: 0;
+    color: var(--primary-medium);
+    font-size: var(--font-up-1);
+  }
+}
+
+.interactive-heartbeat__hero--session {
+  padding: 1.35rem;
+
+  h1 {
+    font-size: clamp(1.75rem, 4vw, 2.5rem);
+  }
+}
+
+.interactive-heartbeat__back {
+  display: inline-flex;
+  margin-bottom: 0.85rem;
+  font-weight: 700;
+}
+
+.interactive-heartbeat__eyebrow {
+  color: var(--primary-medium);
+  font-size: var(--font-down-1);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.interactive-heartbeat__live-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.45rem 0.8rem;
+  background: var(--success-low);
+  color: var(--success);
+  font-weight: 800;
+}
+
+.interactive-heartbeat__card {
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.interactive-heartbeat__card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+
+  h2 {
+    margin: 0 0 0.35rem;
+  }
+
+  p {
+    margin: 0;
+    color: var(--primary-medium);
+  }
+}
+
+.interactive-heartbeat__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.interactive-heartbeat__alert {
+  border: 1px solid var(--primary-low);
+  border-radius: 14px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.interactive-heartbeat__alert--error {
+  border-color: var(--danger);
+  background: var(--danger-low);
+}
+
+.interactive-heartbeat__alert--success {
+  border-color: var(--success);
+  background: var(--success-low);
+}
+
+.interactive-heartbeat__alert--warning {
+  border-color: var(--tertiary);
+  background: var(--tertiary-low);
+}
+
+.interactive-heartbeat__field,
+.interactive-heartbeat__range-field {
+  display: grid;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+  font-weight: 700;
+
+  input[type="text"],
+  select {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--primary-low-mid);
+    border-radius: 10px;
+    padding: 0.65rem 0.75rem;
+    background: var(--secondary);
+    color: var(--primary);
+  }
+
+  input[type="range"] {
+    width: 100%;
+  }
+}
+
+.interactive-heartbeat__fieldset {
+  display: grid;
+  gap: 0.65rem;
+  border: 1px solid var(--primary-low);
+  border-radius: 12px;
+  padding: 0.9rem;
+  margin: 0 0 1rem;
+
+  legend {
+    padding: 0 0.35rem;
+    font-weight: 800;
+  }
+
+  label {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.55rem;
+  }
+}
+
+.interactive-heartbeat__consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  border: 1px solid var(--primary-low);
+  border-radius: 12px;
+  padding: 0.85rem;
+  margin-bottom: 0.85rem;
+  font-weight: 700;
+
+  input {
+    margin-top: 0.2rem;
+  }
+}
+
+.interactive-heartbeat__suggestions {
+  display: grid;
+  gap: 0.35rem;
+  margin: -0.5rem 0 1rem;
+  border: 1px solid var(--primary-low);
+  border-radius: 12px;
+  padding: 0.35rem;
+  background: var(--secondary);
+}
+
+.interactive-heartbeat__suggestion {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  border: 0;
+  border-radius: 9px;
+  padding: 0.55rem;
+  background: transparent;
+  color: var(--primary);
+  text-align: left;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--primary-very-low);
+  }
+
+  img {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+  }
+
+  span {
+    display: grid;
+  }
+
+  small {
+    color: var(--primary-medium);
+  }
+}
+
+.interactive-heartbeat__session-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.interactive-heartbeat__session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid var(--primary-low);
+  border-radius: 14px;
+  padding: 0.85rem;
+  background: var(--primary-very-low);
+}
+
+.interactive-heartbeat__member {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+
+  img {
+    flex: 0 0 auto;
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+  }
+
+  > div {
+    display: grid;
+    min-width: 0;
+  }
+
+  span,
+  p {
+    color: var(--primary-medium);
+  }
+}
+
+.interactive-heartbeat__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
+.interactive-heartbeat__actions--critical {
+  padding-top: 1rem;
+  border-top: 1px solid var(--primary-low);
+}
+
+.interactive-heartbeat__direction-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.75rem 0 1rem;
+  padding-left: 1.25rem;
+}
+
+.interactive-heartbeat__qr {
+  display: grid;
+  justify-items: start;
+  gap: 0.75rem;
+  margin: 1rem 0;
+
+  img {
+    width: min(280px, 100%);
+    height: auto;
+    border-radius: 12px;
+    border: 1px solid var(--primary-low);
+  }
+}
+
+.interactive-heartbeat__participants {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+
+  > div {
+    display: grid;
+    gap: 0.2rem;
+    border: 1px solid var(--primary-low);
+    border-radius: 12px;
+    padding: 0.75rem;
+    background: var(--primary-very-low);
+  }
+
+  span {
+    color: var(--primary-medium);
+    font-size: var(--font-down-1);
+  }
+}
+
+.interactive-heartbeat__session-control {
+  border-color: var(--tertiary);
+}
+
+.interactive-heartbeat__muted {
+  color: var(--primary-medium);
+}
+
+@media (max-width: 800px) {
+  .interactive-heartbeat {
+    width: min(100% - 1rem, 1180px);
+    margin-top: 0.75rem;
+  }
+
+  .interactive-heartbeat__hero,
+  .interactive-heartbeat__session-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .interactive-heartbeat__grid,
+  .interactive-heartbeat__participants {
+    grid-template-columns: 1fr;
+  }
+
+  .interactive-heartbeat__actions {
+    width: 100%;
+
+    .btn {
+      flex: 1 1 auto;
+    }
+  }
+}

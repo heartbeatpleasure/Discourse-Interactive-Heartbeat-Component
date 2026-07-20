@@ -1,0 +1,13 @@
+show_nav_item:
+  default: true
+  type: bool
+  description:
+    en: "Show Interactive Heartbeat in the top navigation."
+    nl: "Toon Interactive Heartbeat in de topnavigatie."
+
+nav_item_text:
+  default: ""
+  type: string
+  description:
+    en: "Optional custom label for the navigation item. Empty uses Interactive Heartbeat."
+    nl: "Optionele eigen tekst voor het navigatie-item. Leeg gebruikt Interactive Heartbeat."
