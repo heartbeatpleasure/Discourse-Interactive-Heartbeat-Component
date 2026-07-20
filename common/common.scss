@@ -346,3 +346,90 @@
     }
   }
 }
+
+.interactive-heartbeat__signal-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin: 0.35rem 0 0.75rem;
+
+  p {
+    margin: 0;
+  }
+}
+
+.interactive-heartbeat__signal-status {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--primary-low);
+  border-radius: 999px;
+  padding: 0.25rem 0.6rem;
+  font-size: var(--font-down-1);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.interactive-heartbeat__signal-status--live {
+  border-color: var(--success);
+  background: var(--success-low);
+  color: var(--success);
+}
+
+.interactive-heartbeat__signal-status--unstable {
+  border-color: var(--tertiary);
+  background: var(--tertiary-low);
+  color: var(--primary);
+}
+
+.interactive-heartbeat__signal-status--lost {
+  border-color: var(--danger);
+  background: var(--danger-low);
+  color: var(--danger);
+}
+
+.interactive-heartbeat__signal-status--waiting {
+  background: var(--primary-very-low);
+  color: var(--primary-medium);
+}
+
+.interactive-heartbeat__diagnostics {
+  margin-top: 0.85rem;
+  border: 1px solid var(--primary-low);
+  border-radius: 12px;
+  padding: 0.75rem;
+  background: var(--primary-very-low);
+
+  summary {
+    cursor: pointer;
+    font-weight: 800;
+  }
+
+  dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem 1rem;
+    margin: 0.75rem 0 0;
+  }
+
+  dl > div {
+    min-width: 0;
+  }
+
+  dt {
+    color: var(--primary-medium);
+    font-size: var(--font-down-1);
+  }
+
+  dd {
+    margin: 0.1rem 0 0;
+    font-weight: 800;
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (max-width: 600px) {
+  .interactive-heartbeat__diagnostics dl {
+    grid-template-columns: 1fr;
+  }
+}

@@ -4,6 +4,7 @@ import { action } from "@ember/object";
 import { on } from "@ember/modifier";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
 import { ajax } from "discourse/lib/ajax";
+import HeartbeatPulseEngine from "../lib/interactive-heartbeat/pulse-engine";
 import { i18n } from "discourse-i18n";
 import { themePrefix } from "virtual:theme";
 
@@ -99,18 +100,38 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   @tracked toys = [];
   @tracked selectedToyId = "";
   @tracked currentSignal = null;
+  @tracked signalEngineState = {
+    running: false,
+    health: "waiting",
+    stop_reason: null,
+    interval_ms: null,
+    source_age_ms: null,
+    valid_for_ms: 0,
+    signals_received: 0,
+    transport_errors: 0,
+    pulses_due: 0,
+    pulses_sent: 0,
+    pulses_skipped_late: 0,
+    pulses_skipped_busy: 0,
+    pulse_errors: 0,
+  };
   @tracked controlling = false;
   @tracked emergencyStopped = false;
+  @tracked lastLovenseError = null;
 
   refreshTimer = null;
   signalTimer = null;
-  pulseTimer = null;
   pulseStopTimer = null;
   lockTimer = null;
   sdk = null;
   tabId = randomId();
   controllerLockHeld = false;
-  localSignalValidUntil = 0;
+  pulseEngine = null;
+  toyCommandChain = Promise.resolve();
+  toyCommandQueueDepth = 0;
+  pulseSequence = 0;
+  signalLossLatched = false;
+  signalLossPauseRequested = false;
   destroyed = false;
 
   willDestroy() {
@@ -226,13 +247,50 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   }
 
   get signalText() {
-    if (!this.currentSignal?.active) {
-      return "Waiting for a fresh heartbeat signal";
+    const health = this.signalEngineState?.health || "waiting";
+    const source = this.currentSignal?.source?.username || "Partner";
+    const interval = this.signalEngineState?.interval_ms;
+
+    if (health === "live" && interval) {
+      return t("interactive_heartbeat.signal.live", { source, interval });
+    }
+    if (health === "unstable" && interval) {
+      return t("interactive_heartbeat.signal.unstable", { source, interval });
+    }
+    if (health === "lost") {
+      return t("interactive_heartbeat.signal.lost");
     }
 
-    const source = this.currentSignal.source?.username || "Partner";
-    const interval = this.currentSignal.pulse?.interval_ms;
-    return `${source}'s heartbeat · pulse every ${interval} ms`;
+    return t("interactive_heartbeat.signal.waiting");
+  }
+
+  get signalStatusLabel() {
+    return t(
+      `interactive_heartbeat.signal.status_${this.signalEngineState?.health || "waiting"}`,
+    );
+  }
+
+  get signalStatusClass() {
+    return `interactive-heartbeat__signal-status interactive-heartbeat__signal-status--${
+      this.signalEngineState?.health || "waiting"
+    }`;
+  }
+
+  get signalSourceAgeSeconds() {
+    const ageMs = Number(this.signalEngineState?.source_age_ms);
+    return Number.isFinite(ageMs) ? Math.max(Math.round(ageMs / 1000), 0) : "—";
+  }
+
+  get lastPulseTime() {
+    const value = Number(this.signalEngineState?.last_pulse_at_ms);
+    return Number.isFinite(value) && value > 0
+      ? new Date(value).toLocaleTimeString()
+      : "—";
+  }
+
+  get signalIntervalLabel() {
+    const value = Number(this.signalEngineState?.interval_ms);
+    return Number.isFinite(value) && value > 0 ? Math.round(value) : "—";
   }
 
   get lovenseStatusText() {
@@ -310,7 +368,14 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     ) {
       this.startSignalPolling();
     } else {
-      this.stopSignalPolling();
+      const stopReason = this.signalLossLatched
+        ? "signal_lost"
+        : "session_not_active";
+      this.signalLossPauseRequested = false;
+      this.stopSignalPolling(stopReason);
+      if (stopReason !== "signal_lost") {
+        this.signalLossLatched = false;
+      }
     }
   }
 
@@ -355,9 +420,9 @@ export default class InteractiveHeartbeatSessionPage extends Component {
       this.emergencyStopped = false;
     } else {
       this.emergencyStopped = true;
-      this.clearPulseLoop();
+      this.ensurePulseEngine().stop("consent_revoked", { notifyToy: false });
       this.releaseControllerLock();
-      void this.stopToyAction();
+      void this.stopSelectedToyAction();
     }
   }
 
@@ -439,6 +504,8 @@ export default class InteractiveHeartbeatSessionPage extends Component {
       return;
     }
     this.emergencyStopped = false;
+    this.signalLossLatched = false;
+    this.signalLossPauseRequested = false;
     this.starting = true;
     this.error = null;
     try {
@@ -479,7 +546,8 @@ export default class InteractiveHeartbeatSessionPage extends Component {
         },
       );
       this.applySession(session, true);
-      await this.stopToyAction();
+      this.ensurePulseEngine().stop(`session_${actionName}`, { notifyToy: false });
+      await this.stopSelectedToyAction();
     } catch (error) {
       this.error = errorMessage(
         error,
@@ -528,8 +596,10 @@ export default class InteractiveHeartbeatSessionPage extends Component {
         }
       });
       this.sdk.on("sdkError", (data) => {
-        this.error =
+        const message =
           data?.message || t("interactive_heartbeat.errors.lovense_failed");
+        this.lastLovenseError = message;
+        this.error = message;
       });
       this.sdk.on("appStatusChange", async (status) => {
         this.appConnected = status === true;
@@ -557,6 +627,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
         error,
         t("interactive_heartbeat.errors.lovense_failed"),
       );
+      this.lastLovenseError = this.error;
     } finally {
       this.lovenseConnecting = false;
     }
@@ -606,19 +677,22 @@ export default class InteractiveHeartbeatSessionPage extends Component {
 
   @action
   async testToy() {
-    if (!this.sdk || !this.toySelected) {
+    if (!this.sdk || !this.toySelected || this.toyCommandQueueDepth > 0) {
       return;
     }
+
+    const sequence = ++this.pulseSequence;
     try {
-      await Promise.resolve(
+      await this.queueToyCommand(() =>
         this.sdk.sendToyCommand({
           vibrate: Math.min(this.pulseStrength, 5),
           toyId: this.selectedToyId,
         }),
       );
+      this.controlling = true;
       window.clearTimeout(this.pulseStopTimer);
       this.pulseStopTimer = window.setTimeout(
-        () => void this.stopToyAction(),
+        () => void this.stopHeartbeatPulse(sequence),
         600,
       );
     } catch (error) {
@@ -626,38 +700,158 @@ export default class InteractiveHeartbeatSessionPage extends Component {
         error,
         t("interactive_heartbeat.errors.lovense_failed"),
       );
+      this.lastLovenseError = this.error;
     }
   }
 
-  async stopToyAction() {
+  ensurePulseEngine() {
+    if (this.pulseEngine) {
+      return this.pulseEngine;
+    }
+
+    this.pulseEngine = new HeartbeatPulseEngine({
+      onPulse: (pulse) => this.sendHeartbeatPulse(pulse),
+      onStop: () => this.stopSelectedToyAction(),
+      onStateChange: (state) => {
+        if (this.destroyed) {
+          return;
+        }
+
+        const wasLost = this.signalEngineState?.health === "lost";
+        this.signalEngineState = { ...state };
+        if (state.health === "lost" && !wasLost && this.active) {
+          this.signalLossLatched = true;
+          void this.pauseForSignalLoss();
+        }
+      },
+    });
+    return this.pulseEngine;
+  }
+
+  async queueToyCommand(command) {
+    this.toyCommandQueueDepth += 1;
+    const operation = this.toyCommandChain.catch(() => {}).then(command);
+    this.toyCommandChain = operation.catch(() => {});
+
+    try {
+      return await operation;
+    } finally {
+      this.toyCommandQueueDepth = Math.max(this.toyCommandQueueDepth - 1, 0);
+    }
+  }
+
+  async stopSelectedToyAction({ invalidatePulse = true } = {}) {
     window.clearTimeout(this.pulseStopTimer);
     this.pulseStopTimer = null;
+    if (invalidatePulse) {
+      this.pulseSequence += 1;
+    }
     this.controlling = false;
+
     if (!this.sdk?.stopToyAction) {
       return;
     }
+
+    const toyId = this.selectedToyId;
     try {
-      await Promise.resolve(this.sdk.stopToyAction());
+      await this.queueToyCommand(() =>
+        this.sdk.stopToyAction(toyId ? { toyId } : undefined),
+      );
     } catch {
       // Local stopping remains best-effort when the Lovense connection is lost.
     }
   }
 
-  clearPulseLoop() {
-    window.clearTimeout(this.pulseTimer);
-    this.pulseTimer = null;
-    window.clearTimeout(this.pulseStopTimer);
-    this.pulseStopTimer = null;
-    this.controlling = false;
+  async stopHeartbeatPulse(sequence) {
+    if (sequence !== this.pulseSequence) {
+      return;
+    }
+    await this.stopSelectedToyAction({ invalidatePulse: false });
+  }
+
+  canControlToy() {
+    return Boolean(
+      this.active &&
+      this.needsToy &&
+      this.toyConsent &&
+      this.sdkReady &&
+      this.appConnected &&
+      this.toySelected &&
+      this.signalEngineState?.running &&
+      ["live", "unstable"].includes(this.signalEngineState?.health) &&
+      !this.emergencyStopped,
+    );
+  }
+
+  async sendHeartbeatPulse(pulse) {
+    if (!this.canControlToy() || this.toyCommandQueueDepth > 0) {
+      return false;
+    }
+    if (!this.acquireControllerLock() || !this.refreshControllerLock()) {
+      this.error = t("interactive_heartbeat.errors.another_tab");
+      return false;
+    }
+
+    const sequence = ++this.pulseSequence;
+    const requestedStrength = Number(pulse?.strength || this.pulseStrength);
+    const requestedDuration = Number(
+      pulse?.duration_ms || this.pulseDurationMs,
+    );
+    const strength = Math.max(
+      Math.min(
+        Number.isFinite(requestedStrength)
+          ? requestedStrength
+          : this.pulseStrength,
+        this.maxIntensity,
+        20,
+      ),
+      1,
+    );
+    const durationMs = Math.max(
+      Math.min(
+        Number.isFinite(requestedDuration)
+          ? requestedDuration
+          : this.pulseDurationMs,
+        500,
+      ),
+      100,
+    );
+
+    try {
+      await this.queueToyCommand(() =>
+        this.sdk.sendToyCommand({
+          vibrate: strength,
+          toyId: this.selectedToyId,
+        }),
+      );
+      if (sequence !== this.pulseSequence || !this.canControlToy()) {
+        return false;
+      }
+
+      this.controlling = true;
+      window.clearTimeout(this.pulseStopTimer);
+      this.pulseStopTimer = window.setTimeout(
+        () => void this.stopHeartbeatPulse(sequence),
+        durationMs,
+      );
+      return true;
+    } catch (error) {
+      this.error = errorMessage(
+        error,
+        t("interactive_heartbeat.errors.lovense_failed"),
+      );
+      this.lastLovenseError = this.error;
+      await this.handleToyUnavailable();
+      throw error;
+    }
   }
 
   @action
   async emergencyStopToy() {
     this.emergencyStopped = true;
-    this.localSignalValidUntil = 0;
-    this.clearPulseLoop();
+    this.ensurePulseEngine().stop("emergency_stop", { notifyToy: false });
     this.releaseControllerLock();
-    await this.stopToyAction();
+    await this.stopSelectedToyAction();
     this.notice = t("interactive_heartbeat.lovense.stopped_and_revoked");
 
     if (
@@ -674,10 +868,9 @@ export default class InteractiveHeartbeatSessionPage extends Component {
 
   async handleToyUnavailable() {
     this.emergencyStopped = true;
-    this.localSignalValidUntil = 0;
-    this.clearPulseLoop();
+    this.ensurePulseEngine().stop("toy_disconnected", { notifyToy: false });
     this.releaseControllerLock();
-    await this.stopToyAction();
+    await this.stopSelectedToyAction();
 
     if (this.active) {
       try {
@@ -697,7 +890,32 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     }
   }
 
+  async pauseForSignalLoss() {
+    if (this.signalLossPauseRequested || !this.active) {
+      return;
+    }
+
+    this.signalLossPauseRequested = true;
+    try {
+      const session = await ajax(
+        `/interactive-heartbeat/api/sessions/${this.token}/pause`,
+        { type: "PUT" },
+      );
+      this.applySession(session, true);
+    } catch (error) {
+      if (error?.jqXHR?.status === 404 || error?.jqXHR?.status === 403) {
+        this.error = errorMessage(
+          error,
+          t("interactive_heartbeat.errors.session_load_failed"),
+        );
+      }
+    } finally {
+      this.signalLossPauseRequested = false;
+    }
+  }
+
   startSignalPolling() {
+    this.ensurePulseEngine();
     if (this.signalTimer) {
       return;
     }
@@ -709,13 +927,11 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     );
   }
 
-  stopSignalPolling() {
+  stopSignalPolling(reason = "session_not_active") {
     window.clearInterval(this.signalTimer);
     this.signalTimer = null;
     this.currentSignal = null;
-    this.localSignalValidUntil = 0;
-    this.clearPulseLoop();
-    void this.stopToyAction();
+    this.ensurePulseEngine().stop(reason);
     this.releaseControllerLock();
   }
 
@@ -724,91 +940,21 @@ export default class InteractiveHeartbeatSessionPage extends Component {
       const signal = await ajax(
         `/interactive-heartbeat/api/sessions/${this.token}/signal`,
       );
-      if (!signal?.active) {
-        this.currentSignal = signal;
-        this.localSignalValidUntil = 0;
-        this.clearPulseLoop();
-        await this.stopToyAction();
+      this.currentSignal = signal;
+      if (this.signalLossLatched) {
+        void this.pauseForSignalLoss();
         return;
       }
-
-      this.currentSignal = signal;
-      const validityMs = Math.max(
-        Number(signal.expires_at_ms) - Number(signal.server_time_ms),
-        0,
-      );
-      this.localSignalValidUntil = Date.now() + validityMs;
-      this.ensurePulseLoop();
+      this.ensurePulseEngine().updateSignal(signal);
     } catch (error) {
-      this.currentSignal = null;
-      this.localSignalValidUntil = 0;
-      await this.stopToyAction();
+      this.ensurePulseEngine().markTransportError();
       if (error?.jqXHR?.status === 404 || error?.jqXHR?.status === 403) {
+        this.ensurePulseEngine().stop("session_closed");
         this.error = errorMessage(
           error,
           t("interactive_heartbeat.errors.session_load_failed"),
         );
       }
-    }
-  }
-
-  ensurePulseLoop() {
-    if (this.pulseTimer || !this.canControlToy()) {
-      return;
-    }
-    if (!this.acquireControllerLock()) {
-      this.error = t("interactive_heartbeat.errors.another_tab");
-      return;
-    }
-    this.pulseTimer = window.setTimeout(() => void this.emitPulse(), 0);
-  }
-
-  canControlToy() {
-    return Boolean(
-      this.active &&
-      this.needsToy &&
-      this.toyConsent &&
-      this.sdkReady &&
-      this.appConnected &&
-      this.toySelected &&
-      this.currentSignal?.active &&
-      !this.emergencyStopped &&
-      Date.now() < this.localSignalValidUntil,
-    );
-  }
-
-  async emitPulse() {
-    this.pulseTimer = null;
-    if (!this.canControlToy() || !this.refreshControllerLock()) {
-      await this.stopToyAction();
-      return;
-    }
-
-    const pulse = this.currentSignal.pulse;
-    try {
-      await Promise.resolve(
-        this.sdk.sendToyCommand({
-          vibrate: pulse.strength,
-          toyId: this.selectedToyId,
-        }),
-      );
-      this.controlling = true;
-      window.clearTimeout(this.pulseStopTimer);
-      this.pulseStopTimer = window.setTimeout(
-        () => void this.stopToyAction(),
-        pulse.duration_ms,
-      );
-      this.pulseTimer = window.setTimeout(
-        () => void this.emitPulse(),
-        pulse.interval_ms,
-      );
-    } catch (error) {
-      this.error = errorMessage(
-        error,
-        t("interactive_heartbeat.errors.lovense_failed"),
-      );
-      await this.stopToyAction();
-      this.releaseControllerLock();
     }
   }
 
@@ -841,8 +987,10 @@ export default class InteractiveHeartbeatSessionPage extends Component {
       if (this.controllerLockHeld && !this.lockTimer) {
         this.lockTimer = window.setInterval(() => {
           if (!this.refreshControllerLock()) {
-            this.clearPulseLoop();
-            void this.stopToyAction();
+            this.ensurePulseEngine().stop("controller_lock_lost", {
+              notifyToy: false,
+            });
+            void this.stopSelectedToyAction();
           }
         }, 2000);
       }
@@ -896,13 +1044,19 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   }
 
   destroySdk() {
-    this.clearPulseLoop();
+    this.ensurePulseEngine().stop("lovense_disconnected", { notifyToy: false });
+    window.clearTimeout(this.pulseStopTimer);
+    this.pulseStopTimer = null;
+    this.pulseSequence += 1;
+    this.controlling = false;
     this.releaseControllerLock();
     if (!this.sdk) {
       return;
     }
     try {
-      this.sdk.stopToyAction?.();
+      this.sdk.stopToyAction?.(
+        this.selectedToyId ? { toyId: this.selectedToyId } : undefined,
+      );
       this.sdk.destroy?.();
     } catch {
       // Best-effort cleanup during provider disconnects.
@@ -922,6 +1076,8 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     window.clearTimeout(this.pulseStopTimer);
     this.pulseStopTimer = null;
     this.destroySdk();
+    this.pulseEngine?.destroy();
+    this.pulseEngine = null;
     this.releaseControllerLock();
   }
 
@@ -1199,10 +1355,69 @@ export default class InteractiveHeartbeatSessionPage extends Component {
           >
             <div>
               <h2>Session control</h2>
-              <p>{{this.signalText}}</p>
+              <div class="interactive-heartbeat__signal-summary">
+                <span class={{this.signalStatusClass}}>
+                  {{this.signalStatusLabel}}
+                </span>
+                <p>{{this.signalText}}</p>
+              </div>
               <p class="interactive-heartbeat__muted">{{t
                   "interactive_heartbeat.session.safety"
                 }}</p>
+
+              {{#if this.needsToy}}
+                <details class="interactive-heartbeat__diagnostics">
+                  <summary>{{t
+                      "interactive_heartbeat.signal.diagnostics_title"
+                    }}</summary>
+                  <dl>
+                    <div>
+                      <dt>{{t "interactive_heartbeat.signal.source_age"}}</dt>
+                      <dd>{{this.signalSourceAgeSeconds}} s</dd>
+                    </div>
+                    <div>
+                      <dt>{{t "interactive_heartbeat.signal.interval"}}</dt>
+                      <dd>{{this.signalIntervalLabel}} ms</dd>
+                    </div>
+                    <div>
+                      <dt>{{t "interactive_heartbeat.signal.last_pulse"}}</dt>
+                      <dd>{{this.lastPulseTime}}</dd>
+                    </div>
+                    <div>
+                      <dt>{{t "interactive_heartbeat.signal.updates"}}</dt>
+                      <dd>{{this.signalEngineState.signals_received}}</dd>
+                    </div>
+                    <div>
+                      <dt>{{t "interactive_heartbeat.signal.pulses_sent"}}</dt>
+                      <dd>{{this.signalEngineState.pulses_sent}}</dd>
+                    </div>
+                    <div>
+                      <dt>{{t "interactive_heartbeat.signal.late_skips"}}</dt>
+                      <dd>{{this.signalEngineState.pulses_skipped_late}}</dd>
+                    </div>
+                    <div>
+                      <dt>{{t "interactive_heartbeat.signal.busy_skips"}}</dt>
+                      <dd>{{this.signalEngineState.pulses_skipped_busy}}</dd>
+                    </div>
+                    <div>
+                      <dt>{{t
+                          "interactive_heartbeat.signal.transport_errors"
+                        }}</dt>
+                      <dd>{{this.signalEngineState.transport_errors}}</dd>
+                    </div>
+                    <div>
+                      <dt>{{t "interactive_heartbeat.signal.pulse_errors"}}</dt>
+                      <dd>{{this.signalEngineState.pulse_errors}}</dd>
+                    </div>
+                    <div>
+                      <dt>{{t
+                          "interactive_heartbeat.signal.last_lovense_error"
+                        }}</dt>
+                      <dd>{{if this.lastLovenseError this.lastLovenseError "—"}}</dd>
+                    </div>
+                  </dl>
+                </details>
+              {{/if}}
             </div>
 
             <div class="interactive-heartbeat__participants">
