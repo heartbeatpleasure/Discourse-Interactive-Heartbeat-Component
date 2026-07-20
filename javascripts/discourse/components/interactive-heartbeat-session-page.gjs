@@ -5,6 +5,10 @@ import { on } from "@ember/modifier";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
 import { ajax } from "discourse/lib/ajax";
 import HeartbeatPulseEngine from "../lib/interactive-heartbeat/pulse-engine";
+import {
+  buildHeartbeatPattern,
+  shouldReplaceHeartbeatPattern,
+} from "../lib/interactive-heartbeat/heartbeat-pattern";
 import { i18n } from "discourse-i18n";
 import { themePrefix } from "virtual:theme";
 
@@ -109,11 +113,20 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     valid_for_ms: 0,
     signals_received: 0,
     transport_errors: 0,
-    pulses_due: 0,
-    pulses_sent: 0,
-    pulses_skipped_late: 0,
-    pulses_skipped_busy: 0,
-    pulse_errors: 0,
+    beats_due: 0,
+    browser_beats_skipped_late: 0,
+    pattern_cycles_estimated: 0,
+    pattern_updates: 0,
+    pattern_reuses: 0,
+    fallback_pulses_sent: 0,
+    commands_skipped_busy: 0,
+    command_errors: 0,
+    control_mode: "idle",
+    pattern_cycle_ms: null,
+    pattern_step_ms: null,
+    pattern_on_ms: null,
+    pattern_duty_percent: null,
+    pattern_run_seconds: null,
   };
   @tracked controlling = false;
   @tracked emergencyStopped = false;
@@ -130,6 +143,9 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   toyCommandChain = Promise.resolve();
   toyCommandQueueDepth = 0;
   pulseSequence = 0;
+  activeHeartbeatPattern = null;
+  patternRefreshAtMs = 0;
+  patternExpiresAtMs = 0;
   signalLossLatched = false;
   signalLossPauseRequested = false;
   destroyed = false;
@@ -281,16 +297,56 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     return Number.isFinite(ageMs) ? Math.max(Math.round(ageMs / 1000), 0) : "—";
   }
 
-  get lastPulseTime() {
+  get lastHeartbeatCycleTime() {
     const value = Number(this.signalEngineState?.last_pulse_at_ms);
     return Number.isFinite(value) && value > 0
       ? new Date(value).toLocaleTimeString()
       : "—";
   }
 
+  get lastPatternTime() {
+    const value = Number(this.signalEngineState?.last_pattern_at_ms);
+    return Number.isFinite(value) && value > 0
+      ? new Date(value).toLocaleTimeString()
+      : "—";
+  }
+
+  get controlModeLabel() {
+    const mode = this.signalEngineState?.control_mode || "idle";
+    return t(`interactive_heartbeat.signal.mode_${mode}`);
+  }
+
+  get patternCycleLabel() {
+    const value = Number(this.signalEngineState?.pattern_cycle_ms);
+    return Number.isFinite(value) && value > 0 ? Math.round(value) : "—";
+  }
+
+  get patternOnTimeLabel() {
+    const value = Number(this.signalEngineState?.pattern_on_ms);
+    return Number.isFinite(value) && value > 0 ? Math.round(value) : "—";
+  }
+
+  get patternStepLabel() {
+    const value = Number(this.signalEngineState?.pattern_step_ms);
+    return Number.isFinite(value) && value > 0 ? Math.round(value) : "—";
+  }
+
+  get patternDutyLabel() {
+    const value = Number(this.signalEngineState?.pattern_duty_percent);
+    return Number.isFinite(value) && value >= 0 ? Math.round(value) : "—";
+  }
+
   get signalIntervalLabel() {
     const value = Number(this.signalEngineState?.interval_ms);
     return Number.isFinite(value) && value > 0 ? Math.round(value) : "—";
+  }
+
+  clearLovenseError() {
+    const previousError = this.lastLovenseError;
+    this.lastLovenseError = null;
+    if (previousError && this.error === previousError) {
+      this.error = null;
+    }
   }
 
   get lovenseStatusText() {
@@ -590,6 +646,9 @@ export default class InteractiveHeartbeatSessionPage extends Component {
       this.sdk.on("ready", async () => {
         this.sdkReady = true;
         this.appConnected = Boolean(this.sdk.getAppStatus?.());
+        if (this.appConnected) {
+          this.clearLovenseError();
+        }
         await this.refreshToys();
         if (!this.appConnected) {
           await this.refreshQrCode();
@@ -604,6 +663,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
       this.sdk.on("appStatusChange", async (status) => {
         this.appConnected = status === true;
         if (this.appConnected) {
+          this.clearLovenseError();
           this.qrCodeUrl = null;
           await this.refreshToys();
         } else {
@@ -649,6 +709,9 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     const toys = await Promise.resolve(this.sdk.getOnlineToys());
     this.appConnected = Boolean(this.sdk.getAppStatus?.());
     this.applyToys(toys);
+    if (this.appConnected && this.toys.length > 0) {
+      this.clearLovenseError();
+    }
   }
 
   applyToys(toys) {
@@ -666,8 +729,25 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   }
 
   @action
-  selectToy(event) {
-    this.selectedToyId = event.target.value;
+  async selectToy(event) {
+    const nextToyId = String(event.target.value || "");
+    if (nextToyId === this.selectedToyId) {
+      return;
+    }
+
+    const previousToyId = this.selectedToyId;
+    this.pulseSequence += 1;
+    this.resetHeartbeatPatternState();
+    if (previousToyId && this.sdk?.stopToyAction) {
+      try {
+        await this.queueToyCommand(() =>
+          this.sdk.stopToyAction({ toyId: previousToyId }),
+        );
+      } catch {
+        // Best-effort stop before moving local control to another toy.
+      }
+    }
+    this.selectedToyId = nextToyId;
   }
 
   @action
@@ -690,6 +770,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
         }),
       );
       this.controlling = true;
+      this.clearLovenseError();
       window.clearTimeout(this.pulseStopTimer);
       this.pulseStopTimer = window.setTimeout(
         () => void this.stopHeartbeatPulse(sequence),
@@ -740,19 +821,28 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     }
   }
 
-  async stopSelectedToyAction({ invalidatePulse = true } = {}) {
+  resetHeartbeatPatternState() {
+    this.activeHeartbeatPattern = null;
+    this.patternRefreshAtMs = 0;
+    this.patternExpiresAtMs = 0;
+  }
+
+  async stopSelectedToyAction({
+    invalidatePulse = true,
+    toyId = this.selectedToyId,
+  } = {}) {
     window.clearTimeout(this.pulseStopTimer);
     this.pulseStopTimer = null;
     if (invalidatePulse) {
       this.pulseSequence += 1;
     }
+    this.resetHeartbeatPatternState();
     this.controlling = false;
 
     if (!this.sdk?.stopToyAction) {
       return;
     }
 
-    const toyId = this.selectedToyId;
     try {
       await this.queueToyCommand(() =>
         this.sdk.stopToyAction(toyId ? { toyId } : undefined),
@@ -783,39 +873,125 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     );
   }
 
-  async sendHeartbeatPulse(pulse) {
-    if (!this.canControlToy() || this.toyCommandQueueDepth > 0) {
-      return false;
-    }
-    if (!this.acquireControllerLock() || !this.refreshControllerLock()) {
-      this.error = t("interactive_heartbeat.errors.another_tab");
-      return false;
-    }
-
-    const sequence = ++this.pulseSequence;
+  heartbeatControlSettings(pulse) {
     const requestedStrength = Number(pulse?.strength || this.pulseStrength);
     const requestedDuration = Number(
       pulse?.duration_ms || this.pulseDurationMs,
     );
-    const strength = Math.max(
-      Math.min(
-        Number.isFinite(requestedStrength)
-          ? requestedStrength
-          : this.pulseStrength,
-        this.maxIntensity,
-        20,
+
+    return {
+      strength: Math.max(
+        Math.min(
+          Number.isFinite(requestedStrength)
+            ? requestedStrength
+            : this.pulseStrength,
+          this.maxIntensity,
+          20,
+        ),
+        1,
       ),
-      1,
-    );
-    const durationMs = Math.max(
-      Math.min(
-        Number.isFinite(requestedDuration)
-          ? requestedDuration
-          : this.pulseDurationMs,
-        500,
+      durationMs: Math.max(
+        Math.min(
+          Number.isFinite(requestedDuration)
+            ? requestedDuration
+            : this.pulseDurationMs,
+          500,
+        ),
+        100,
       ),
-      100,
-    );
+    };
+  }
+
+  async sendHeartbeatPulse(pulse) {
+    if (!this.canControlToy() || this.toyCommandQueueDepth > 0) {
+      return { status: "busy" };
+    }
+    if (!this.acquireControllerLock() || !this.refreshControllerLock()) {
+      this.error = t("interactive_heartbeat.errors.another_tab");
+      return { status: "busy" };
+    }
+
+    if (typeof this.sdk?.sendPatternCommand === "function") {
+      return this.sendHeartbeatPattern(pulse);
+    }
+
+    return this.sendLegacyHeartbeatPulse(pulse);
+  }
+
+  async sendHeartbeatPattern(pulse) {
+    const { strength, durationMs } = this.heartbeatControlSettings(pulse);
+    const nextPattern = {
+      ...buildHeartbeatPattern({
+        intervalMs: pulse?.interval_ms,
+        strength,
+        maxIntensity: this.maxIntensity,
+        requestedPulseDurationMs: durationMs,
+      }),
+      toy_id: this.selectedToyId,
+    };
+    const nowMs = Date.now();
+
+    if (
+      !shouldReplaceHeartbeatPattern(
+        this.activeHeartbeatPattern,
+        nextPattern,
+        { nowMs, refreshAtMs: this.patternRefreshAtMs },
+      )
+    ) {
+      return {
+        status: "active",
+        mode: "pattern",
+        pattern: this.activeHeartbeatPattern,
+      };
+    }
+
+    const sequence = ++this.pulseSequence;
+    try {
+      await this.queueToyCommand(() =>
+        this.sdk.sendPatternCommand({
+          strength: nextPattern.strength,
+          time: nextPattern.run_seconds,
+          interval: nextPattern.interval_ms,
+          vibrate: true,
+          toyId: this.selectedToyId,
+        }),
+      );
+
+      if (sequence !== this.pulseSequence || !this.canControlToy()) {
+        return { status: "busy" };
+      }
+
+      const acceptedAtMs = Date.now();
+      this.activeHeartbeatPattern = { ...nextPattern };
+      this.patternRefreshAtMs =
+        acceptedAtMs + nextPattern.refresh_after_ms;
+      this.patternExpiresAtMs =
+        acceptedAtMs + nextPattern.run_seconds * 1000;
+      this.controlling = true;
+      this.clearLovenseError();
+      window.clearTimeout(this.pulseStopTimer);
+      this.pulseStopTimer = null;
+
+      return {
+        status: "updated",
+        mode: "pattern",
+        pattern: this.activeHeartbeatPattern,
+      };
+    } catch (error) {
+      this.resetHeartbeatPatternState();
+      this.error = errorMessage(
+        error,
+        t("interactive_heartbeat.errors.lovense_failed"),
+      );
+      this.lastLovenseError = this.error;
+      await this.handleToyUnavailable();
+      throw error;
+    }
+  }
+
+  async sendLegacyHeartbeatPulse(pulse) {
+    const sequence = ++this.pulseSequence;
+    const { strength, durationMs } = this.heartbeatControlSettings(pulse);
 
     try {
       await this.queueToyCommand(() =>
@@ -825,16 +1001,17 @@ export default class InteractiveHeartbeatSessionPage extends Component {
         }),
       );
       if (sequence !== this.pulseSequence || !this.canControlToy()) {
-        return false;
+        return { status: "busy" };
       }
 
       this.controlling = true;
+      this.clearLovenseError();
       window.clearTimeout(this.pulseStopTimer);
       this.pulseStopTimer = window.setTimeout(
         () => void this.stopHeartbeatPulse(sequence),
         durationMs,
       );
-      return true;
+      return { status: "sent", mode: "fallback" };
     } catch (error) {
       this.error = errorMessage(
         error,
@@ -1048,6 +1225,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     window.clearTimeout(this.pulseStopTimer);
     this.pulseStopTimer = null;
     this.pulseSequence += 1;
+    this.resetHeartbeatPatternState();
     this.controlling = false;
     this.releaseControllerLock();
     if (!this.sdk) {
@@ -1239,6 +1417,9 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                     value={{this.pulseDurationMs}}
                     {{on "input" this.updatePulseDuration}}
                   />
+                  <small class="interactive-heartbeat__muted">{{t
+                      "interactive_heartbeat.session.pulse_duration_help"
+                    }}</small>
                 </label>
               {{/if}}
 
@@ -1380,24 +1561,56 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                       <dd>{{this.signalIntervalLabel}} ms</dd>
                     </div>
                     <div>
-                      <dt>{{t "interactive_heartbeat.signal.last_pulse"}}</dt>
-                      <dd>{{this.lastPulseTime}}</dd>
+                      <dt>{{t "interactive_heartbeat.signal.control_mode"}}</dt>
+                      <dd>{{this.controlModeLabel}}</dd>
+                    </div>
+                    <div>
+                      <dt>{{t "interactive_heartbeat.signal.pattern_cycle"}}</dt>
+                      <dd>{{this.patternCycleLabel}} ms</dd>
+                    </div>
+                    <div>
+                      <dt>{{t "interactive_heartbeat.signal.pattern_on_time"}}</dt>
+                      <dd>{{this.patternOnTimeLabel}} ms</dd>
+                    </div>
+                    <div>
+                      <dt>{{t "interactive_heartbeat.signal.pattern_step"}}</dt>
+                      <dd>{{this.patternStepLabel}} ms</dd>
+                    </div>
+                    <div>
+                      <dt>{{t "interactive_heartbeat.signal.pattern_duty"}}</dt>
+                      <dd>{{this.patternDutyLabel}}%</dd>
+                    </div>
+                    <div>
+                      <dt>{{t "interactive_heartbeat.signal.last_pattern"}}</dt>
+                      <dd>{{this.lastPatternTime}}</dd>
+                    </div>
+                    <div>
+                      <dt>{{t "interactive_heartbeat.signal.last_cycle"}}</dt>
+                      <dd>{{this.lastHeartbeatCycleTime}}</dd>
                     </div>
                     <div>
                       <dt>{{t "interactive_heartbeat.signal.updates"}}</dt>
                       <dd>{{this.signalEngineState.signals_received}}</dd>
                     </div>
                     <div>
-                      <dt>{{t "interactive_heartbeat.signal.pulses_sent"}}</dt>
-                      <dd>{{this.signalEngineState.pulses_sent}}</dd>
+                      <dt>{{t "interactive_heartbeat.signal.pattern_updates"}}</dt>
+                      <dd>{{this.signalEngineState.pattern_updates}}</dd>
                     </div>
                     <div>
-                      <dt>{{t "interactive_heartbeat.signal.late_skips"}}</dt>
-                      <dd>{{this.signalEngineState.pulses_skipped_late}}</dd>
+                      <dt>{{t "interactive_heartbeat.signal.estimated_cycles"}}</dt>
+                      <dd>{{this.signalEngineState.pattern_cycles_estimated}}</dd>
+                    </div>
+                    <div>
+                      <dt>{{t "interactive_heartbeat.signal.fallback_pulses"}}</dt>
+                      <dd>{{this.signalEngineState.fallback_pulses_sent}}</dd>
+                    </div>
+                    <div>
+                      <dt>{{t "interactive_heartbeat.signal.browser_delays"}}</dt>
+                      <dd>{{this.signalEngineState.browser_beats_skipped_late}}</dd>
                     </div>
                     <div>
                       <dt>{{t "interactive_heartbeat.signal.busy_skips"}}</dt>
-                      <dd>{{this.signalEngineState.pulses_skipped_busy}}</dd>
+                      <dd>{{this.signalEngineState.commands_skipped_busy}}</dd>
                     </div>
                     <div>
                       <dt>{{t
@@ -1406,8 +1619,8 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                       <dd>{{this.signalEngineState.transport_errors}}</dd>
                     </div>
                     <div>
-                      <dt>{{t "interactive_heartbeat.signal.pulse_errors"}}</dt>
-                      <dd>{{this.signalEngineState.pulse_errors}}</dd>
+                      <dt>{{t "interactive_heartbeat.signal.command_errors"}}</dt>
+                      <dd>{{this.signalEngineState.command_errors}}</dd>
                     </div>
                     <div>
                       <dt>{{t

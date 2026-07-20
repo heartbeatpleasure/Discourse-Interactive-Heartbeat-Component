@@ -57,17 +57,23 @@ export default class HeartbeatPulseEngine {
     this.smoothedIntervalMs = DEFAULT_INTERVAL_MS;
     this.nextPulseAtMonotonic = null;
     this.lastPulseAtMs = null;
+    this.lastPatternAtMs = null;
     this.lastPulseError = null;
     this.transportUnstable = false;
+    this.controlMode = "idle";
+    this.pattern = null;
 
     this.diagnostics = {
       signals_received: 0,
       transport_errors: 0,
-      pulses_due: 0,
-      pulses_sent: 0,
-      pulses_skipped_late: 0,
-      pulses_skipped_busy: 0,
-      pulse_errors: 0,
+      beats_due: 0,
+      browser_beats_skipped_late: 0,
+      pattern_cycles_estimated: 0,
+      pattern_updates: 0,
+      pattern_reuses: 0,
+      fallback_pulses_sent: 0,
+      commands_skipped_busy: 0,
+      command_errors: 0,
     };
   }
 
@@ -172,6 +178,7 @@ export default class HeartbeatPulseEngine {
     this.stopReason = reason;
     this.transportUnstable = false;
     this.nextPulseAtMonotonic = null;
+    this.controlMode = "idle";
     this.clearScheduledTimers();
     this.publishState();
 
@@ -198,7 +205,14 @@ export default class HeartbeatPulseEngine {
       valid_for_ms: Math.max(this.validUntilMs - this.now(), 0),
       last_signal_at_ms: this.lastSignalAtMs,
       last_pulse_at_ms: this.lastPulseAtMs,
+      last_pattern_at_ms: this.lastPatternAtMs,
       last_pulse_error: this.lastPulseError,
+      control_mode: this.controlMode,
+      pattern_cycle_ms: this.pattern?.cycle_ms ?? null,
+      pattern_step_ms: this.pattern?.interval_ms ?? null,
+      pattern_on_ms: this.pattern?.on_ms ?? null,
+      pattern_duty_percent: this.pattern?.duty_percent ?? null,
+      pattern_run_seconds: this.pattern?.run_seconds ?? null,
       ...this.diagnostics,
     };
   }
@@ -252,10 +266,10 @@ export default class HeartbeatPulseEngine {
     );
     const lateThresholdMs = Math.max(intervalMs * 0.65, 250);
 
-    this.diagnostics.pulses_due += 1;
+    this.diagnostics.beats_due += 1;
     if (latenessMs > lateThresholdMs) {
       const missed = Math.max(Math.floor(latenessMs / intervalMs), 1);
-      this.diagnostics.pulses_skipped_late += missed;
+      this.diagnostics.browser_beats_skipped_late += missed;
       this.nextPulseAtMonotonic = nowMonotonic + intervalMs;
     } else {
       this.nextPulseAtMonotonic =
@@ -273,28 +287,55 @@ export default class HeartbeatPulseEngine {
     try {
       const result = this.onPulse?.(pulse);
       Promise.resolve(result)
-        .then((sent) => {
-          if (sent === false) {
-            this.diagnostics.pulses_skipped_busy += 1;
-          } else {
-            this.diagnostics.pulses_sent += 1;
-            this.lastPulseAtMs = this.now();
-          }
-          this.publishState();
-        })
-        .catch((error) => {
-          this.diagnostics.pulse_errors += 1;
-          this.lastPulseError = error?.message || String(error || "pulse_error");
-          this.publishState();
-        });
+        .then((outcome) => this.handleControlOutcome(outcome))
+        .catch((error) => this.recordCommandError(error));
     } catch (error) {
-      this.diagnostics.pulse_errors += 1;
-      this.lastPulseError = error?.message || String(error || "pulse_error");
+      this.recordCommandError(error);
     }
 
     this.refreshHealth();
     this.publishState();
     this.schedulePulse();
+  }
+
+  handleControlOutcome(outcome) {
+    if (outcome === false || outcome?.status === "busy") {
+      this.diagnostics.commands_skipped_busy += 1;
+      this.publishState();
+      return;
+    }
+
+    const mode = outcome?.mode || "fallback";
+    const status = outcome?.status || "sent";
+    const pattern = outcome?.pattern || null;
+    const nowMs = this.now();
+
+    this.controlMode = mode;
+    this.lastPulseAtMs = nowMs;
+    this.lastPulseError = null;
+
+    if (mode === "pattern") {
+      this.diagnostics.pattern_cycles_estimated += 1;
+      if (status === "updated") {
+        this.diagnostics.pattern_updates += 1;
+        this.lastPatternAtMs = nowMs;
+      } else {
+        this.diagnostics.pattern_reuses += 1;
+      }
+      if (pattern) {
+        this.pattern = { ...pattern };
+      }
+    } else {
+      this.diagnostics.fallback_pulses_sent += 1;
+    }
+
+    this.publishState();
+  }
+
+  recordCommandError(error) {
+    this.diagnostics.command_errors += 1;
+    this.lastPulseError = error?.message || String(error || "command_error");
+    this.publishState();
   }
 
   scheduleHealthCheck() {
