@@ -2,9 +2,6 @@ import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
 import { on } from "@ember/modifier";
-import didInsert from "@ember/render-modifiers/modifiers/did-insert";
-import didUpdate from "@ember/render-modifiers/modifiers/did-update";
-import willDestroy from "@ember/render-modifiers/modifiers/will-destroy";
 import { ajax } from "discourse/lib/ajax";
 import HeartbeatPulseEngine from "../lib/interactive-heartbeat/pulse-engine";
 import {
@@ -180,7 +177,33 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   loadedConfigurationRevision = null;
   destroyed = false;
   loadInFlight = false;
+  pollInFlight = false;
+  setupStarted = false;
+  lifecycleGeneration = 0;
 
+  constructor(owner, args) {
+    super(owner, args);
+
+    // This component does not need the DOM to load its data. Starting in a
+    // microtask avoids render modifiers and their detached-node lifecycle.
+    Promise.resolve().then(() => {
+      if (!this.destroyed) {
+        this.setup();
+      }
+    });
+  }
+
+  willDestroy() {
+    // Clean up before Glimmer releases the component manager/DOM bounds.
+    this.cleanup();
+    if (super.willDestroy) {
+      super.willDestroy(...arguments);
+    }
+  }
+
+  isCurrentLifecycle(generation) {
+    return !this.destroyed && generation === this.lifecycleGeneration;
+  }
 
   get token() {
     return String(this.args.token || "");
@@ -535,6 +558,10 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   }
 
   clearLovenseError() {
+    if (this.destroyed) {
+      return;
+    }
+
     const previousError = this.lastLovenseError;
     this.lastLovenseError = null;
     if (previousError && this.error === previousError) {
@@ -552,10 +579,15 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     return `interactive-heartbeat-controller:${this.token}:${this.config?.current_user?.id || "unknown"}`;
   }
 
-  @action
   setup() {
+    if (this.destroyed || this.setupStarted) {
+      return;
+    }
+
+    this.setupStarted = true;
+    const generation = this.lifecycleGeneration;
     void this.load(true).finally(() => {
-      if (!this.destroyed && !this.refreshTimer) {
+      if (this.isCurrentLifecycle(generation) && !this.refreshTimer) {
         this.refreshTimer = window.setInterval(() => {
           void this.load(false);
         }, 3000);
@@ -568,31 +600,36 @@ export default class InteractiveHeartbeatSessionPage extends Component {
       return;
     }
 
+    const generation = this.lifecycleGeneration;
     this.loadInFlight = true;
     if (forceSetup) {
       this.loading = true;
     }
 
     try {
-      const requests = [
-        ajax(`/interactive-heartbeat/api/sessions/${this.token}`),
-      ];
-      if (!this.config) {
-        requests.push(ajax("/interactive-heartbeat/api/config"));
-      }
-      const [session, config] = await Promise.all(requests);
-      if (this.destroyed) {
+      const sessionRequest = ajax(
+        `/interactive-heartbeat/api/sessions/${this.token}`,
+      );
+      const configRequest = this.config
+        ? Promise.resolve(null)
+        : ajax("/interactive-heartbeat/api/config");
+      const [session, config] = await Promise.all([
+        sessionRequest,
+        configRequest,
+      ]);
+
+      if (!this.isCurrentLifecycle(generation)) {
         return;
       }
       if (config) {
         this.config = config;
       }
       this.applySession(session, forceSetup);
-      if (!this.destroyed) {
+      if (this.isCurrentLifecycle(generation)) {
         this.error = null;
       }
     } catch (error) {
-      if (!this.destroyed) {
+      if (this.isCurrentLifecycle(generation)) {
         this.error = errorMessage(
           error,
           t("interactive_heartbeat.errors.session_load_failed"),
@@ -600,7 +637,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
       }
     } finally {
       this.loadInFlight = false;
-      if (!this.destroyed) {
+      if (this.isCurrentLifecycle(generation)) {
         this.loading = false;
       }
     }
@@ -707,18 +744,6 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   @action
   async declineSession() {
     await this.sessionAction("decline");
-  }
-
-  @action
-  syncSelectValue(element, value) {
-    if (this.destroyed || !element) {
-      return;
-    }
-
-    const normalizedValue = String(value ?? "");
-    if (element.value !== normalizedValue) {
-      element.value = normalizedValue;
-    }
   }
 
   @action
@@ -1227,6 +1252,10 @@ export default class InteractiveHeartbeatSessionPage extends Component {
           toyId: this.selectedToyId,
         }),
       );
+      if (this.destroyed || sequence !== this.pulseSequence) {
+        return;
+      }
+
       this.controlling = true;
       this.clearLovenseError();
       window.clearTimeout(this.pulseStopTimer);
@@ -1235,11 +1264,13 @@ export default class InteractiveHeartbeatSessionPage extends Component {
         600,
       );
     } catch (error) {
-      this.error = errorMessage(
-        error,
-        t("interactive_heartbeat.errors.lovense_failed"),
-      );
-      this.lastLovenseError = this.error;
+      if (!this.destroyed) {
+        this.error = errorMessage(
+          error,
+          t("interactive_heartbeat.errors.lovense_failed"),
+        );
+        this.lastLovenseError = this.error;
+      }
     }
   }
 
@@ -1295,7 +1326,9 @@ export default class InteractiveHeartbeatSessionPage extends Component {
       this.pulseSequence += 1;
     }
     this.resetHeartbeatPatternState();
-    this.controlling = false;
+    if (!this.destroyed) {
+      this.controlling = false;
+    }
 
     if (!this.sdk?.stopToyAction) {
       return;
@@ -1319,6 +1352,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
 
   canControlToy() {
     return Boolean(
+      !this.destroyed &&
       this.active &&
       this.needsToy &&
       this.toyConsent &&
@@ -1437,12 +1471,14 @@ export default class InteractiveHeartbeatSessionPage extends Component {
       };
     } catch (error) {
       this.resetHeartbeatPatternState();
-      this.error = errorMessage(
-        error,
-        t("interactive_heartbeat.errors.lovense_failed"),
-      );
-      this.lastLovenseError = this.error;
-      await this.handleToyUnavailable();
+      if (!this.destroyed) {
+        this.error = errorMessage(
+          error,
+          t("interactive_heartbeat.errors.lovense_failed"),
+        );
+        this.lastLovenseError = this.error;
+        await this.handleToyUnavailable();
+      }
       throw error;
     }
   }
@@ -1471,12 +1507,14 @@ export default class InteractiveHeartbeatSessionPage extends Component {
       );
       return { status: "sent", mode: "fallback" };
     } catch (error) {
-      this.error = errorMessage(
-        error,
-        t("interactive_heartbeat.errors.lovense_failed"),
-      );
-      this.lastLovenseError = this.error;
-      await this.handleToyUnavailable();
+      if (!this.destroyed) {
+        this.error = errorMessage(
+          error,
+          t("interactive_heartbeat.errors.lovense_failed"),
+        );
+        this.lastLovenseError = this.error;
+        await this.handleToyUnavailable();
+      }
       throw error;
     }
   }
@@ -1487,6 +1525,10 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     this.ensurePulseEngine().stop("emergency_stop", { notifyToy: false });
     this.releaseControllerLock();
     await this.stopSelectedToyAction();
+    if (this.destroyed) {
+      return;
+    }
+
     this.notice = t("interactive_heartbeat.lovense.stopped_and_revoked");
 
     if (
@@ -1506,6 +1548,9 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     this.ensurePulseEngine().stop("toy_disconnected", { notifyToy: false });
     this.releaseControllerLock();
     await this.stopSelectedToyAction();
+    if (this.destroyed) {
+      return;
+    }
 
     if (this.active) {
       try {
@@ -1515,12 +1560,16 @@ export default class InteractiveHeartbeatSessionPage extends Component {
             type: "PUT",
           },
         );
-        this.applySession(session, true);
+        if (!this.destroyed) {
+          this.applySession(session, true);
+        }
       } catch (error) {
-        this.error = errorMessage(
-          error,
-          t("interactive_heartbeat.errors.update_failed"),
-        );
+        if (!this.destroyed) {
+          this.error = errorMessage(
+            error,
+            t("interactive_heartbeat.errors.update_failed"),
+          );
+        }
       }
     }
   }
@@ -1536,16 +1585,23 @@ export default class InteractiveHeartbeatSessionPage extends Component {
         `/interactive-heartbeat/api/sessions/${this.token}/pause`,
         { type: "PUT" },
       );
-      this.applySession(session, true);
+      if (!this.destroyed) {
+        this.applySession(session, true);
+      }
     } catch (error) {
-      if (error?.jqXHR?.status === 404 || error?.jqXHR?.status === 403) {
+      if (
+        !this.destroyed &&
+        (error?.jqXHR?.status === 404 || error?.jqXHR?.status === 403)
+      ) {
         this.error = errorMessage(
           error,
           t("interactive_heartbeat.errors.session_load_failed"),
         );
       }
     } finally {
-      this.signalLossPauseRequested = false;
+      if (!this.destroyed) {
+        this.signalLossPauseRequested = false;
+      }
     }
   }
 
@@ -1571,10 +1627,20 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   }
 
   async pollSignal() {
+    if (this.destroyed || this.pollInFlight) {
+      return;
+    }
+
+    const generation = this.lifecycleGeneration;
+    this.pollInFlight = true;
     try {
       const signal = await ajax(
         `/interactive-heartbeat/api/sessions/${this.token}/signal`,
       );
+      if (!this.isCurrentLifecycle(generation)) {
+        return;
+      }
+
       this.currentSignal = signal;
       if (this.signalLossLatched) {
         void this.pauseForSignalLoss();
@@ -1582,6 +1648,10 @@ export default class InteractiveHeartbeatSessionPage extends Component {
       }
       this.ensurePulseEngine().updateSignal(signal);
     } catch (error) {
+      if (!this.isCurrentLifecycle(generation)) {
+        return;
+      }
+
       this.ensurePulseEngine().markTransportError();
       if (error?.jqXHR?.status === 404 || error?.jqXHR?.status === 403) {
         this.ensurePulseEngine().stop("session_closed");
@@ -1590,6 +1660,8 @@ export default class InteractiveHeartbeatSessionPage extends Component {
           t("interactive_heartbeat.errors.session_load_failed"),
         );
       }
+    } finally {
+      this.pollInFlight = false;
     }
   }
 
@@ -1709,13 +1781,13 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     }
   }
 
-  @action
   cleanup() {
     if (this.destroyed) {
       return;
     }
 
     this.destroyed = true;
+    this.lifecycleGeneration += 1;
     window.clearInterval(this.refreshTimer);
     this.refreshTimer = null;
     window.clearInterval(this.signalTimer);
@@ -1730,11 +1802,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   }
 
   <template>
-    <div
-      class="interactive-heartbeat"
-      {{didInsert this.setup}}
-      {{willDestroy this.cleanup}}
-    >
+    <div class="interactive-heartbeat">
       <a class="interactive-heartbeat__back" href="/interactive-heartbeat">
         ←
         {{t "interactive_heartbeat.back"}}
@@ -1838,11 +1906,9 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                 <select
                   disabled={{this.configurationEditDisabled}}
                   {{on "change" this.updateSessionMode}}
-                  {{didInsert this.syncSelectValue this.sessionMode}}
-                  {{didUpdate this.syncSelectValue this.sessionMode}}
                 >
                   {{#each this.sessionModeOptions as |option|}}
-                    <option value={{option.value}}>
+                    <option value={{option.value}} selected={{option.selected}}>
                       {{option.label}}
                     </option>
                   {{/each}}
@@ -1855,11 +1921,9 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                   <select
                     disabled={{this.configurationEditDisabled}}
                     {{on "change" this.updateLeaderUser}}
-                    {{didInsert this.syncSelectValue this.leaderUserId}}
-                    {{didUpdate this.syncSelectValue this.leaderUserId}}
                   >
                     {{#each this.leaderOptions as |option|}}
-                      <option value={{option.id}}>
+                      <option value={{option.id}} selected={{option.selected}}>
                         {{option.username}}
                       </option>
                     {{/each}}
@@ -1954,11 +2018,9 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                   <select
                     disabled={{this.modeUsesSyncIntensity}}
                     {{on "change" this.updateResponseMode}}
-                    {{didInsert this.syncSelectValue this.responseMode}}
-                    {{didUpdate this.syncSelectValue this.responseMode}}
                   >
                     {{#each this.responseModeOptions as |option|}}
-                      <option value={{option.value}}>
+                      <option value={{option.value}} selected={{option.selected}}>
                         {{option.label}}
                       </option>
                     {{/each}}
@@ -2212,11 +2274,9 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                     <span>{{t "interactive_heartbeat.lovense.toy"}}</span>
                     <select
                       {{on "change" this.selectToy}}
-                      {{didInsert this.syncSelectValue this.selectedToyId}}
-                      {{didUpdate this.syncSelectValue this.selectedToyId}}
                     >
                       {{#each this.toyOptions as |toy|}}
-                        <option value={{toy.id}}>
+                        <option value={{toy.id}} selected={{toy.selected}}>
                           {{toy.name}}{{#if toy.battery}}
                             ·
                             {{toy.battery}}%{{/if}}
