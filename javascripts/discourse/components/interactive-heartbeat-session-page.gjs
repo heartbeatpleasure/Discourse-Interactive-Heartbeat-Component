@@ -251,6 +251,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
       value,
       label: t(`interactive_heartbeat.modes.${value}.label`),
       description: t(`interactive_heartbeat.modes.${value}.description`),
+      selected: value === this.sessionMode,
     }));
   }
 
@@ -261,6 +262,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     return modes.map((value) => ({
       value,
       label: t(`interactive_heartbeat.response_modes.${value}.label`),
+      selected: value === this.responseMode,
     }));
   }
 
@@ -308,7 +310,18 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   get leaderOptions() {
     return [this.session?.initiator, this.session?.invitee]
       .filter(Boolean)
-      .map((user) => ({ id: String(user.id), username: user.username }));
+      .map((user) => ({
+        id: String(user.id),
+        username: user.username,
+        selected: String(user.id) === String(this.leaderUserId),
+      }));
+  }
+
+  get toyOptions() {
+    return this.toys.map((toy) => ({
+      ...toy,
+      selected: toy.id === this.selectedToyId,
+    }));
   }
 
   get responseIsFixed() {
@@ -1708,12 +1721,13 @@ export default class InteractiveHeartbeatSessionPage extends Component {
               <label class="interactive-heartbeat__field">
                 <span>{{t "interactive_heartbeat.session.mode"}}</span>
                 <select
-                  value={{this.sessionMode}}
                   disabled={{this.configurationEditDisabled}}
                   {{on "change" this.updateSessionMode}}
                 >
                   {{#each this.sessionModeOptions as |option|}}
-                    <option value={{option.value}}>{{option.label}}</option>
+                    <option value={{option.value}} selected={{option.selected}}>
+                      {{option.label}}
+                    </option>
                   {{/each}}
                 </select>
               </label>
@@ -1722,12 +1736,13 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                 <label class="interactive-heartbeat__field">
                   <span>{{t "interactive_heartbeat.session.leader"}}</span>
                   <select
-                    value={{this.leaderUserId}}
                     disabled={{this.configurationEditDisabled}}
                     {{on "change" this.updateLeaderUser}}
                   >
                     {{#each this.leaderOptions as |option|}}
-                      <option value={{option.id}}>{{option.username}}</option>
+                      <option value={{option.id}} selected={{option.selected}}>
+                        {{option.username}}
+                      </option>
                     {{/each}}
                   </select>
                 </label>
@@ -1817,9 +1832,14 @@ export default class InteractiveHeartbeatSessionPage extends Component {
 
                 <label class="interactive-heartbeat__field">
                   <span>{{t "interactive_heartbeat.session.response_mode"}}</span>
-                  <select value={{this.responseMode}} disabled={{this.modeUsesSyncIntensity}} {{on "change" this.updateResponseMode}}>
+                  <select
+                    disabled={{this.modeUsesSyncIntensity}}
+                    {{on "change" this.updateResponseMode}}
+                  >
                     {{#each this.responseModeOptions as |option|}}
-                      <option value={{option.value}}>{{option.label}}</option>
+                      <option value={{option.value}} selected={{option.selected}}>
+                        {{option.label}}
+                      </option>
                     {{/each}}
                   </select>
                 </label>
@@ -2069,14 +2089,13 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                 {{#if this.toys.length}}
                   <label class="interactive-heartbeat__field">
                     <span>{{t "interactive_heartbeat.lovense.toy"}}</span>
-                    <select
-                      value={{this.selectedToyId}}
-                      {{on "change" this.selectToy}}
-                    >
-                      {{#each this.toys as |toy|}}
-                        <option value={{toy.id}}>{{toy.name}}{{#if toy.battery}}
+                    <select {{on "change" this.selectToy}}>
+                      {{#each this.toyOptions as |toy|}}
+                        <option value={{toy.id}} selected={{toy.selected}}>
+                          {{toy.name}}{{#if toy.battery}}
                             ·
-                            {{toy.battery}}%{{/if}}</option>
+                            {{toy.battery}}%{{/if}}
+                        </option>
                       {{/each}}
                     </select>
                   </label>
