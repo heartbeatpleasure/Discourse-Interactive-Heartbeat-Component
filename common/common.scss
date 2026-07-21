@@ -125,6 +125,7 @@
   font-weight: 700;
 
   input[type="text"],
+  input[type="number"],
   select {
     width: 100%;
     box-sizing: border-box;
@@ -430,6 +431,49 @@
 
 @media (max-width: 600px) {
   .interactive-heartbeat__diagnostics dl {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+.interactive-heartbeat__mode-card {
+  border-color: var(--tertiary-medium);
+}
+
+.interactive-heartbeat__mode-grid,
+.interactive-heartbeat__settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem 1rem;
+}
+
+.interactive-heartbeat__settings-grid--zones {
+  align-items: end;
+}
+
+.interactive-heartbeat__configuration-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  border: 1px solid var(--primary-low);
+  border-radius: 12px;
+  padding: 0.75rem;
+  background: var(--primary-very-low);
+  font-weight: 700;
+}
+
+.interactive-heartbeat__field--spacer {
+  align-content: center;
+}
+
+.interactive-heartbeat__fieldset .interactive-heartbeat__field,
+.interactive-heartbeat__fieldset .interactive-heartbeat__range-field {
+  margin-bottom: 0;
+}
+
+@media (max-width: 800px) {
+  .interactive-heartbeat__mode-grid,
+  .interactive-heartbeat__settings-grid {
     grid-template-columns: 1fr;
   }
 }

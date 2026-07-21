@@ -5,6 +5,9 @@ const MIN_VALIDITY_MS = 250;
 const SMOOTHING_FACTOR = 0.35;
 const MAX_INTERVAL_STEP_RATIO = 0.18;
 const TIMER_FLOOR_MS = 10;
+const DEFAULT_STRENGTH = 12;
+const DEFAULT_RAMP_UP_PER_SECOND = 2;
+const DEFAULT_RAMP_DOWN_PER_SECOND = 4;
 
 function clamp(value, minimum, maximum) {
   return Math.min(Math.max(value, minimum), maximum);
@@ -55,6 +58,12 @@ export default class HeartbeatPulseEngine {
     this.lostAfterMs = 12000;
     this.targetIntervalMs = DEFAULT_INTERVAL_MS;
     this.smoothedIntervalMs = DEFAULT_INTERVAL_MS;
+    this.targetStrength = DEFAULT_STRENGTH;
+    this.smoothedStrength = DEFAULT_STRENGTH;
+    this.lastStrengthUpdateAtMs = null;
+    this.currentZoneKey = null;
+    this.pendingZoneKey = null;
+    this.pendingZoneCount = 0;
     this.nextPulseAtMonotonic = null;
     this.lastPulseAtMs = null;
     this.lastPatternAtMs = null;
@@ -74,6 +83,9 @@ export default class HeartbeatPulseEngine {
       fallback_pulses_sent: 0,
       commands_skipped_busy: 0,
       command_errors: 0,
+      intensity_updates: 0,
+      zone_changes_confirmed: 0,
+      zone_changes_deferred: 0,
     };
   }
 
@@ -103,10 +115,8 @@ export default class HeartbeatPulseEngine {
     }
 
     const receivedAtMs = this.now();
-    const sourceAgeMs = Math.max(
-      finiteNumber(signal.source_age_ms, 0),
-      0,
-    );
+    const sourceAgeMs = Math.max(finiteNumber(signal.source_age_ms, 0), 0);
+    const wasRunning = this.running;
 
     this.signal = signal;
     this.lastSignalAtMs = receivedAtMs;
@@ -123,6 +133,7 @@ export default class HeartbeatPulseEngine {
     );
     this.targetIntervalMs = intervalMs;
     this.smoothedIntervalMs = this.smoothInterval(intervalMs);
+    this.updateStrength(signal, receivedAtMs, wasRunning);
     this.stopReason = null;
     this.transportUnstable = false;
     this.diagnostics.signals_received += 1;
@@ -136,6 +147,147 @@ export default class HeartbeatPulseEngine {
     this.refreshHealth();
     this.scheduleHealthCheck();
     this.publishState();
+  }
+
+  updateStrength(signal, receivedAtMs, wasRunning) {
+    const pulse = signal?.pulse || {};
+    const response = signal?.response || {};
+    let desired = clamp(
+      Math.round(
+        finiteNumber(
+          pulse.desired_strength,
+          finiteNumber(pulse.strength, DEFAULT_STRENGTH),
+        ),
+      ),
+      1,
+      20,
+    );
+    const zoneKey = String(pulse.zone_key || response.zone_key || "");
+    const responseMode = String(
+      pulse.response_mode || response.mode || "fixed",
+    );
+
+    if (responseMode === "zones" && zoneKey) {
+      const resolved = this.resolveZoneStrength(response, zoneKey, desired);
+      desired = resolved.strength;
+      this.currentZoneKey = resolved.zoneKey;
+    } else {
+      this.currentZoneKey = zoneKey || null;
+      this.pendingZoneKey = null;
+      this.pendingZoneCount = 0;
+    }
+
+    this.targetStrength = desired;
+    if (!wasRunning || this.lastStrengthUpdateAtMs === null) {
+      this.smoothedStrength = desired;
+      this.lastStrengthUpdateAtMs = receivedAtMs;
+      return;
+    }
+
+    const elapsedSeconds = clamp(
+      (receivedAtMs - this.lastStrengthUpdateAtMs) / 1000,
+      0.1,
+      5,
+    );
+    const rampUp = clamp(
+      finiteNumber(pulse.ramp_up_per_second, DEFAULT_RAMP_UP_PER_SECOND),
+      1,
+      20,
+    );
+    const rampDown = clamp(
+      finiteNumber(pulse.ramp_down_per_second, DEFAULT_RAMP_DOWN_PER_SECOND),
+      1,
+      20,
+    );
+    const difference = desired - this.smoothedStrength;
+    const maximumChange =
+      difference >= 0 ? rampUp * elapsedSeconds : rampDown * elapsedSeconds;
+    const nextStrength =
+      this.smoothedStrength + clamp(difference, -maximumChange, maximumChange);
+
+    if (Math.abs(nextStrength - this.smoothedStrength) >= 0.01) {
+      this.diagnostics.intensity_updates += 1;
+    }
+    this.smoothedStrength = clamp(nextStrength, 1, 20);
+    this.lastStrengthUpdateAtMs = receivedAtMs;
+  }
+
+
+  resolveZoneStrength(response, proposedZoneKey, proposedStrength) {
+    const zones = ["low", "medium", "high", "peak"];
+    const proposedIndex = zones.indexOf(proposedZoneKey);
+    if (proposedIndex < 0) {
+      return { zoneKey: proposedZoneKey, strength: proposedStrength };
+    }
+
+    if (!this.currentZoneKey || !zones.includes(this.currentZoneKey)) {
+      this.pendingZoneKey = null;
+      this.pendingZoneCount = 0;
+      return { zoneKey: proposedZoneKey, strength: proposedStrength };
+    }
+
+    const currentIndex = zones.indexOf(this.currentZoneKey);
+    if (currentIndex === proposedIndex) {
+      this.pendingZoneKey = null;
+      this.pendingZoneCount = 0;
+      return { zoneKey: this.currentZoneKey, strength: proposedStrength };
+    }
+
+    const thresholds = Array.isArray(response?.zone_thresholds)
+      ? response.zone_thresholds.map((value) => finiteNumber(value, null))
+      : [];
+    const bpm = finiteNumber(response?.input_bpm, null);
+    const hysteresis = clamp(
+      finiteNumber(response?.hysteresis_bpm, 0),
+      0,
+      10,
+    );
+    let crossedMargin = true;
+
+    if (bpm !== null && thresholds.length >= 3) {
+      if (proposedIndex > currentIndex) {
+        const boundary = thresholds[proposedIndex - 1];
+        crossedMargin = boundary !== null && bpm > boundary + hysteresis;
+      } else {
+        const boundary = thresholds[proposedIndex];
+        crossedMargin = boundary !== null && bpm < boundary - hysteresis;
+      }
+    }
+
+    if (!crossedMargin) {
+      this.pendingZoneKey = null;
+      this.pendingZoneCount = 0;
+      this.diagnostics.zone_changes_deferred += 1;
+      return {
+        zoneKey: this.currentZoneKey,
+        strength: this.zoneStrength(response, this.currentZoneKey, this.targetStrength),
+      };
+    }
+
+    if (this.pendingZoneKey === proposedZoneKey) {
+      this.pendingZoneCount += 1;
+    } else {
+      this.pendingZoneKey = proposedZoneKey;
+      this.pendingZoneCount = 1;
+    }
+
+    if (this.pendingZoneCount < 2) {
+      this.diagnostics.zone_changes_deferred += 1;
+      return {
+        zoneKey: this.currentZoneKey,
+        strength: this.zoneStrength(response, this.currentZoneKey, this.targetStrength),
+      };
+    }
+
+    this.pendingZoneKey = null;
+    this.pendingZoneCount = 0;
+    this.diagnostics.zone_changes_confirmed += 1;
+    return { zoneKey: proposedZoneKey, strength: proposedStrength };
+  }
+
+  zoneStrength(response, zoneKey, fallback) {
+    const value = finiteNumber(response?.zone_intensities?.[zoneKey], null);
+    return value === null ? fallback : clamp(Math.round(value), 1, 20);
   }
 
   markTransportError() {
@@ -179,6 +331,9 @@ export default class HeartbeatPulseEngine {
     this.transportUnstable = false;
     this.nextPulseAtMonotonic = null;
     this.controlMode = "idle";
+    this.currentZoneKey = null;
+    this.pendingZoneKey = null;
+    this.pendingZoneCount = 0;
     this.clearScheduledTimers();
     this.publishState();
 
@@ -201,6 +356,9 @@ export default class HeartbeatPulseEngine {
       stop_reason: this.stopReason,
       target_interval_ms: Math.round(this.targetIntervalMs),
       interval_ms: Math.round(this.smoothedIntervalMs),
+      desired_strength: Math.round(this.targetStrength),
+      applied_strength: Math.round(this.smoothedStrength),
+      current_zone_key: this.currentZoneKey,
       source_age_ms: this.estimatedSourceAgeMs(),
       valid_for_ms: Math.max(this.validUntilMs - this.now(), 0),
       last_signal_at_ms: this.lastSignalAtMs,
@@ -282,6 +440,8 @@ export default class HeartbeatPulseEngine {
     const pulse = {
       ...this.signal?.pulse,
       interval_ms: Math.round(intervalMs),
+      strength: Math.round(this.smoothedStrength),
+      desired_strength: Math.round(this.targetStrength),
     };
 
     try {

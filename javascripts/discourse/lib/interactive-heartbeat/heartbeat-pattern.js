@@ -9,6 +9,8 @@ const DEFAULT_RUN_SECONDS = 10;
 const DEFAULT_REFRESH_LEAD_MS = 3000;
 const MIN_INTERVAL_CHANGE_MS = 40;
 const MIN_INTERVAL_CHANGE_RATIO = 0.05;
+const MIN_DYNAMIC_UPDATE_GAP_MS = 2500;
+const MIN_STRENGTH_CHANGE = 2;
 
 function clamp(value, minimum, maximum) {
   return Math.min(Math.max(value, minimum), maximum);
@@ -108,11 +110,20 @@ export function shouldReplaceHeartbeatPattern(
     return true;
   }
 
-  const configurationChanged =
+  if (
     current.toy_id !== next.toy_id ||
-    current.strength_level !== next.strength_level ||
-    current.requested_on_ms !== next.requested_on_ms;
-  if (configurationChanged) {
+    current.requested_on_ms !== next.requested_on_ms
+  ) {
+    return true;
+  }
+
+  const lastUpdatedAtMs = Number(current.updated_at_ms || 0);
+  const dynamicUpdateAllowed =
+    !lastUpdatedAtMs || nowMs - lastUpdatedAtMs >= MIN_DYNAMIC_UPDATE_GAP_MS;
+  const strengthDifference = Math.abs(
+    Number(current.strength_level) - Number(next.strength_level),
+  );
+  if (dynamicUpdateAllowed && strengthDifference >= MIN_STRENGTH_CHANGE) {
     return true;
   }
 
@@ -124,5 +135,5 @@ export function shouldReplaceHeartbeatPattern(
     Number(current.cycle_ms) * MIN_INTERVAL_CHANGE_RATIO,
   );
 
-  return intervalDifference >= meaningfulIntervalDifference;
+  return dynamicUpdateAllowed && intervalDifference >= meaningfulIntervalDifference;
 }
