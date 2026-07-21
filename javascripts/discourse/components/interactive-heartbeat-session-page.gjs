@@ -3,6 +3,8 @@ import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
 import { on } from "@ember/modifier";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
+import didUpdate from "@ember/render-modifiers/modifiers/did-update";
+import willDestroy from "@ember/render-modifiers/modifiers/will-destroy";
 import { ajax } from "discourse/lib/ajax";
 import HeartbeatPulseEngine from "../lib/interactive-heartbeat/pulse-engine";
 import {
@@ -177,14 +179,8 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   signalLossPauseRequested = false;
   loadedConfigurationRevision = null;
   destroyed = false;
+  loadInFlight = false;
 
-  willDestroy() {
-    if (super.willDestroy) {
-      super.willDestroy(...arguments);
-    }
-    this.destroyed = true;
-    this.cleanup();
-  }
 
   get token() {
     return String(this.args.token || "");
@@ -557,14 +553,22 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   }
 
   @action
-  async setup() {
-    await this.load(true);
-    if (!this.destroyed) {
-      this.refreshTimer = window.setInterval(() => this.load(false), 3000);
-    }
+  setup() {
+    void this.load(true).finally(() => {
+      if (!this.destroyed && !this.refreshTimer) {
+        this.refreshTimer = window.setInterval(() => {
+          void this.load(false);
+        }, 3000);
+      }
+    });
   }
 
   async load(forceSetup = false) {
+    if (this.destroyed || this.loadInFlight) {
+      return;
+    }
+
+    this.loadInFlight = true;
     if (forceSetup) {
       this.loading = true;
     }
@@ -577,22 +581,35 @@ export default class InteractiveHeartbeatSessionPage extends Component {
         requests.push(ajax("/interactive-heartbeat/api/config"));
       }
       const [session, config] = await Promise.all(requests);
+      if (this.destroyed) {
+        return;
+      }
       if (config) {
         this.config = config;
       }
       this.applySession(session, forceSetup);
-      this.error = null;
+      if (!this.destroyed) {
+        this.error = null;
+      }
     } catch (error) {
-      this.error = errorMessage(
-        error,
-        t("interactive_heartbeat.errors.session_load_failed"),
-      );
+      if (!this.destroyed) {
+        this.error = errorMessage(
+          error,
+          t("interactive_heartbeat.errors.session_load_failed"),
+        );
+      }
     } finally {
-      this.loading = false;
+      this.loadInFlight = false;
+      if (!this.destroyed) {
+        this.loading = false;
+      }
     }
   }
 
   applySession(session, forceSetup = false) {
+    if (this.destroyed || !session) {
+      return;
+    }
     const revision = Number(session?.configuration?.revision || 1);
     const revisionChanged = this.loadedConfigurationRevision !== revision;
     this.session = session;
@@ -670,20 +687,38 @@ export default class InteractiveHeartbeatSessionPage extends Component {
           type: "PUT",
         },
       );
-      this.applySession(session, true);
+      if (!this.destroyed) {
+        this.applySession(session, true);
+      }
     } catch (error) {
-      this.error = errorMessage(
-        error,
-        t("interactive_heartbeat.errors.update_failed"),
-      );
+      if (!this.destroyed) {
+        this.error = errorMessage(
+          error,
+          t("interactive_heartbeat.errors.update_failed"),
+        );
+      }
     } finally {
-      this.accepting = false;
+      if (!this.destroyed) {
+        this.accepting = false;
+      }
     }
   }
 
   @action
   async declineSession() {
     await this.sessionAction("decline");
+  }
+
+  @action
+  syncSelectValue(element, value) {
+    if (this.destroyed || !element) {
+      return;
+    }
+
+    const normalizedValue = String(value ?? "");
+    if (element.value !== normalizedValue) {
+      element.value = normalizedValue;
+    }
   }
 
   @action
@@ -747,16 +782,22 @@ export default class InteractiveHeartbeatSessionPage extends Component {
           },
         },
       );
-      this.configurationDirty = false;
-      this.applySession(session, false);
-      this.notice = t("interactive_heartbeat.session.mode_proposed");
+      if (!this.destroyed) {
+        this.configurationDirty = false;
+        this.applySession(session, false);
+        this.notice = t("interactive_heartbeat.session.mode_proposed");
+      }
     } catch (error) {
-      this.error = errorMessage(
-        error,
-        t("interactive_heartbeat.errors.update_failed"),
-      );
+      if (!this.destroyed) {
+        this.error = errorMessage(
+          error,
+          t("interactive_heartbeat.errors.update_failed"),
+        );
+      }
     } finally {
-      this.saving = false;
+      if (!this.destroyed) {
+        this.saving = false;
+      }
     }
   }
 
@@ -883,15 +924,21 @@ export default class InteractiveHeartbeatSessionPage extends Component {
           },
         },
       );
-      this.setupDirty = false;
-      this.applySession(session, true);
+      if (!this.destroyed) {
+        this.setupDirty = false;
+        this.applySession(session, true);
+      }
     } catch (error) {
-      this.error = errorMessage(
-        error,
-        t("interactive_heartbeat.errors.update_failed"),
-      );
+      if (!this.destroyed) {
+        this.error = errorMessage(
+          error,
+          t("interactive_heartbeat.errors.update_failed"),
+        );
+      }
     } finally {
-      this.saving = false;
+      if (!this.destroyed) {
+        this.saving = false;
+      }
     }
   }
 
@@ -930,14 +977,20 @@ export default class InteractiveHeartbeatSessionPage extends Component {
           type: "PUT",
         },
       );
-      this.applySession(session, true);
+      if (!this.destroyed) {
+        this.applySession(session, true);
+      }
     } catch (error) {
-      this.error = errorMessage(
-        error,
-        t("interactive_heartbeat.errors.update_failed"),
-      );
+      if (!this.destroyed) {
+        this.error = errorMessage(
+          error,
+          t("interactive_heartbeat.errors.update_failed"),
+        );
+      }
     } finally {
-      this.starting = false;
+      if (!this.destroyed) {
+        this.starting = false;
+      }
     }
   }
 
@@ -960,14 +1013,19 @@ export default class InteractiveHeartbeatSessionPage extends Component {
           type: "PUT",
         },
       );
+      if (this.destroyed) {
+        return;
+      }
       this.applySession(session, true);
       this.ensurePulseEngine().stop(`session_${actionName}`, { notifyToy: false });
       await this.stopSelectedToyAction();
     } catch (error) {
-      this.error = errorMessage(
-        error,
-        t("interactive_heartbeat.errors.update_failed"),
-      );
+      if (!this.destroyed) {
+        this.error = errorMessage(
+          error,
+          t("interactive_heartbeat.errors.update_failed"),
+        );
+      }
     }
   }
 
@@ -988,38 +1046,55 @@ export default class InteractiveHeartbeatSessionPage extends Component {
           data: { session_token: this.token },
         },
       );
+      if (this.destroyed) {
+        return;
+      }
+
       await loadExternalScript(authorization.sdk_url);
+      if (this.destroyed) {
+        return;
+      }
       if (typeof window.LovenseBasicSdk !== "function") {
         throw new Error("Lovense SDK is unavailable.");
       }
 
       this.destroySdk();
-      this.sdk = new window.LovenseBasicSdk({
+      const sdk = new window.LovenseBasicSdk({
         platform: authorization.platform,
         authToken: authorization.auth_token,
         uid: authorization.uid,
         appType: authorization.app_type,
         debug: false,
       });
+      this.sdk = sdk;
 
-      this.sdk.on("ready", async () => {
+      sdk.on("ready", async () => {
+        if (this.destroyed || this.sdk !== sdk) {
+          return;
+        }
         this.sdkReady = true;
-        this.appConnected = Boolean(this.sdk.getAppStatus?.());
+        this.appConnected = Boolean(sdk.getAppStatus?.());
         if (this.appConnected) {
           this.clearLovenseError();
         }
         await this.refreshToys();
-        if (!this.appConnected) {
+        if (!this.destroyed && this.sdk === sdk && !this.appConnected) {
           await this.refreshQrCode();
         }
       });
-      this.sdk.on("sdkError", (data) => {
+      sdk.on("sdkError", (data) => {
+        if (this.destroyed || this.sdk !== sdk) {
+          return;
+        }
         const message =
           data?.message || t("interactive_heartbeat.errors.lovense_failed");
         this.lastLovenseError = message;
         this.error = message;
       });
-      this.sdk.on("appStatusChange", async (status) => {
+      sdk.on("appStatusChange", async (status) => {
+        if (this.destroyed || this.sdk !== sdk) {
+          return;
+        }
         this.appConnected = status === true;
         if (this.appConnected) {
           this.clearLovenseError();
@@ -1031,8 +1106,15 @@ export default class InteractiveHeartbeatSessionPage extends Component {
           await this.handleToyUnavailable();
         }
       });
-      this.sdk.on("toyInfoChange", (toyInfo) => this.applyToys(toyInfo));
-      this.sdk.on("toyOnlineChange", async (status) => {
+      sdk.on("toyInfoChange", (toyInfo) => {
+        if (!this.destroyed && this.sdk === sdk) {
+          this.applyToys(toyInfo);
+        }
+      });
+      sdk.on("toyOnlineChange", async (status) => {
+        if (this.destroyed || this.sdk !== sdk) {
+          return;
+        }
         if (!status) {
           this.toys = [];
           this.selectedToyId = "";
@@ -1042,31 +1124,43 @@ export default class InteractiveHeartbeatSessionPage extends Component {
         }
       });
     } catch (error) {
-      this.error = errorMessage(
-        error,
-        t("interactive_heartbeat.errors.lovense_failed"),
-      );
-      this.lastLovenseError = this.error;
+      if (!this.destroyed) {
+        this.error = errorMessage(
+          error,
+          t("interactive_heartbeat.errors.lovense_failed"),
+        );
+        this.lastLovenseError = this.error;
+      }
     } finally {
-      this.lovenseConnecting = false;
+      if (!this.destroyed) {
+        this.lovenseConnecting = false;
+      }
     }
   }
 
   async refreshQrCode() {
-    if (!this.sdk?.getQrcode) {
+    const sdk = this.sdk;
+    if (!sdk?.getQrcode) {
       return;
     }
-    const response = await this.sdk.getQrcode();
+    const response = await sdk.getQrcode();
+    if (this.destroyed || this.sdk !== sdk) {
+      return;
+    }
     this.qrCodeUrl = response?.qrcodeUrl || null;
   }
 
   @action
   async refreshToys() {
-    if (!this.sdk?.getOnlineToys) {
+    const sdk = this.sdk;
+    if (!sdk?.getOnlineToys) {
       return;
     }
-    const toys = await Promise.resolve(this.sdk.getOnlineToys());
-    this.appConnected = Boolean(this.sdk.getAppStatus?.());
+    const toys = await Promise.resolve(sdk.getOnlineToys());
+    if (this.destroyed || this.sdk !== sdk) {
+      return;
+    }
+    this.appConnected = Boolean(sdk.getAppStatus?.());
     this.applyToys(toys);
     if (this.appConnected && this.toys.length > 0) {
       this.clearLovenseError();
@@ -1074,6 +1168,9 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   }
 
   applyToys(toys) {
+    if (this.destroyed) {
+      return;
+    }
     this.toys = (Array.isArray(toys) ? toys : [])
       .filter((toy) => toy?.connected !== false)
       .map((toy) => ({
@@ -1106,7 +1203,9 @@ export default class InteractiveHeartbeatSessionPage extends Component {
         // Best-effort stop before moving local control to another toy.
       }
     }
-    this.selectedToyId = nextToyId;
+    if (!this.destroyed) {
+      this.selectedToyId = nextToyId;
+    }
   }
 
   @action
@@ -1579,13 +1678,15 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     this.controllerLockHeld = false;
   }
 
-  destroySdk() {
-    this.ensurePulseEngine().stop("lovense_disconnected", { notifyToy: false });
+  destroySdk({ updateTrackedState = true } = {}) {
+    this.pulseEngine?.stop("lovense_disconnected", { notifyToy: false });
     window.clearTimeout(this.pulseStopTimer);
     this.pulseStopTimer = null;
     this.pulseSequence += 1;
     this.resetHeartbeatPatternState();
-    this.controlling = false;
+    if (updateTrackedState && !this.destroyed) {
+      this.controlling = false;
+    }
     this.releaseControllerLock();
     if (!this.sdk) {
       return;
@@ -1599,27 +1700,41 @@ export default class InteractiveHeartbeatSessionPage extends Component {
       // Best-effort cleanup during provider disconnects.
     }
     this.sdk = null;
-    this.sdkReady = false;
-    this.appConnected = false;
-    this.qrCodeUrl = null;
-    this.toys = [];
-    this.selectedToyId = "";
+    if (updateTrackedState && !this.destroyed) {
+      this.sdkReady = false;
+      this.appConnected = false;
+      this.qrCodeUrl = null;
+      this.toys = [];
+      this.selectedToyId = "";
+    }
   }
 
+  @action
   cleanup() {
+    if (this.destroyed) {
+      return;
+    }
+
+    this.destroyed = true;
     window.clearInterval(this.refreshTimer);
     this.refreshTimer = null;
-    this.stopSignalPolling();
+    window.clearInterval(this.signalTimer);
+    this.signalTimer = null;
     window.clearTimeout(this.pulseStopTimer);
     this.pulseStopTimer = null;
-    this.destroySdk();
+    this.pulseEngine?.stop("component_destroyed", { notifyToy: false });
+    this.destroySdk({ updateTrackedState: false });
     this.pulseEngine?.destroy();
     this.pulseEngine = null;
     this.releaseControllerLock();
   }
 
   <template>
-    <div class="interactive-heartbeat" {{didInsert this.setup}}>
+    <div
+      class="interactive-heartbeat"
+      {{didInsert this.setup}}
+      {{willDestroy this.cleanup}}
+    >
       <a class="interactive-heartbeat__back" href="/interactive-heartbeat">
         ←
         {{t "interactive_heartbeat.back"}}
@@ -1723,9 +1838,11 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                 <select
                   disabled={{this.configurationEditDisabled}}
                   {{on "change" this.updateSessionMode}}
+                  {{didInsert this.syncSelectValue this.sessionMode}}
+                  {{didUpdate this.syncSelectValue this.sessionMode}}
                 >
                   {{#each this.sessionModeOptions as |option|}}
-                    <option value={{option.value}} selected={{option.selected}}>
+                    <option value={{option.value}}>
                       {{option.label}}
                     </option>
                   {{/each}}
@@ -1738,9 +1855,11 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                   <select
                     disabled={{this.configurationEditDisabled}}
                     {{on "change" this.updateLeaderUser}}
+                    {{didInsert this.syncSelectValue this.leaderUserId}}
+                    {{didUpdate this.syncSelectValue this.leaderUserId}}
                   >
                     {{#each this.leaderOptions as |option|}}
-                      <option value={{option.id}} selected={{option.selected}}>
+                      <option value={{option.id}}>
                         {{option.username}}
                       </option>
                     {{/each}}
@@ -1835,9 +1954,11 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                   <select
                     disabled={{this.modeUsesSyncIntensity}}
                     {{on "change" this.updateResponseMode}}
+                    {{didInsert this.syncSelectValue this.responseMode}}
+                    {{didUpdate this.syncSelectValue this.responseMode}}
                   >
                     {{#each this.responseModeOptions as |option|}}
-                      <option value={{option.value}} selected={{option.selected}}>
+                      <option value={{option.value}}>
                         {{option.label}}
                       </option>
                     {{/each}}
@@ -2089,9 +2210,13 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                 {{#if this.toys.length}}
                   <label class="interactive-heartbeat__field">
                     <span>{{t "interactive_heartbeat.lovense.toy"}}</span>
-                    <select {{on "change" this.selectToy}}>
+                    <select
+                      {{on "change" this.selectToy}}
+                      {{didInsert this.syncSelectValue this.selectedToyId}}
+                      {{didUpdate this.syncSelectValue this.selectedToyId}}
+                    >
                       {{#each this.toyOptions as |toy|}}
-                        <option value={{toy.id}} selected={{toy.selected}}>
+                        <option value={{toy.id}}>
                           {{toy.name}}{{#if toy.battery}}
                             ·
                             {{toy.battery}}%{{/if}}
