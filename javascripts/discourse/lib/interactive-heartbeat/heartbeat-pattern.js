@@ -5,8 +5,9 @@ const MIN_PATTERN_STEP_MS = 101;
 const MAX_PATTERN_STEPS = 18;
 const MIN_FEELABLE_ON_MS = 220;
 const MAX_ON_MS = 500;
-const DEFAULT_RUN_SECONDS = 10;
-const DEFAULT_REFRESH_LEAD_MS = 3000;
+const TARGET_RUN_MS = 10000;
+const MIN_PATTERN_CYCLES = 4;
+const REFRESH_CYCLES_BEFORE_END = 1;
 const MIN_INTERVAL_CHANGE_MS = 40;
 const MIN_INTERVAL_CHANGE_RATIO = 0.05;
 const MIN_DYNAMIC_UPDATE_GAP_MS = 2500;
@@ -26,7 +27,7 @@ export function buildHeartbeatPattern({
   strength,
   maxIntensity = 20,
   requestedPulseDurationMs = 180,
-  runSeconds = DEFAULT_RUN_SECONDS,
+  runSeconds = null,
 } = {}) {
   const safeIntervalMs = clamp(
     finiteNumber(intervalMs, 750),
@@ -70,9 +71,22 @@ export function buildHeartbeatPattern({
   const values = Array.from({ length: totalSteps }, (_, index) =>
     index < onSteps ? safeStrength : 0,
   );
-  const safeRunSeconds = Math.max(
-    Math.round(finiteNumber(runSeconds, DEFAULT_RUN_SECONDS)),
-    2,
+  const hasExplicitRunSeconds =
+    runSeconds !== null &&
+    runSeconds !== undefined &&
+    Number.isFinite(Number(runSeconds));
+  const requestedRunMs = hasExplicitRunSeconds
+    ? Math.max(Number(runSeconds) * 1000, cycleMs * MIN_PATTERN_CYCLES)
+    : TARGET_RUN_MS;
+  const runCycles = Math.max(
+    Math.round(requestedRunMs / cycleMs),
+    MIN_PATTERN_CYCLES,
+  );
+  const runMs = runCycles * cycleMs;
+  const safeRunSeconds = Math.max(Number((runMs / 1000).toFixed(3)), 2);
+  const refreshAfterCycles = Math.max(
+    runCycles - REFRESH_CYCLES_BEFORE_END,
+    1,
   );
 
   return {
@@ -90,10 +104,10 @@ export function buildHeartbeatPattern({
     on_steps: onSteps,
     strength_level: safeStrength,
     run_seconds: safeRunSeconds,
-    refresh_after_ms: Math.max(
-      safeRunSeconds * 1000 - DEFAULT_REFRESH_LEAD_MS,
-      2000,
-    ),
+    run_cycles: runCycles,
+    run_ms: runMs,
+    refresh_after_ms: refreshAfterCycles * cycleMs,
+    refresh_cycle: refreshAfterCycles,
   };
 }
 

@@ -259,6 +259,78 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     return this.current?.needs_heartbeat_consent === true;
   }
 
+  get permissionsGranted() {
+    return this.current?.permissions_granted === true;
+  }
+
+  get modeApprovalNeeded() {
+    return Boolean(
+      this.current?.accepted &&
+        this.current?.configuration_accepted !== true &&
+        !this.terminal,
+    );
+  }
+
+  get sessionStep() {
+    if (this.invitationPending) {
+      return "invitation";
+    }
+    if (!this.permissionsGranted) {
+      return "permissions";
+    }
+    if (this.needsToy && (!this.sdkReady || !this.appConnected || !this.toySelected)) {
+      return "connections";
+    }
+    if (!this.current?.ready || !this.other?.ready) {
+      return "ready";
+    }
+    return this.active ? "active" : "ready";
+  }
+
+  get progressSteps() {
+    const connectionComplete = Boolean(
+      (!this.needsHeartbeat || this.current?.heartbeat_ready === true) &&
+        (!this.needsToy ||
+          (this.sdkReady && this.appConnected && this.toySelected)),
+    );
+    const steps = [
+      { key: "invitation", complete: this.current?.accepted === true },
+      { key: "permissions", complete: this.permissionsGranted },
+      { key: "connections", complete: connectionComplete },
+      {
+        key: "ready",
+        complete: this.current?.ready === true && this.other?.ready === true,
+      },
+      { key: "active", complete: this.active },
+    ];
+    return steps.map((step) => ({
+      ...step,
+      label: t(`interactive_heartbeat.session.steps.${step.key}`),
+      className: step.complete
+        ? "interactive-heartbeat__step interactive-heartbeat__step--complete"
+        : this.sessionStep === step.key
+          ? "interactive-heartbeat__step interactive-heartbeat__step--current"
+          : "interactive-heartbeat__step",
+    }));
+  }
+
+  get permissionSummaryRows() {
+    const rows = [
+      t("interactive_heartbeat.session.permission_heartbeat"),
+      t("interactive_heartbeat.session.permission_mode", {
+        mode: this.configuredSessionModeLabel,
+      }),
+    ];
+    if (this.needsToy) {
+      rows.push(
+        t("interactive_heartbeat.session.permission_toy", {
+          maximum: this.maxIntensity,
+        }),
+      );
+    }
+    return rows;
+  }
+
   get supportsSharedModes() {
     return (
       Array.isArray(this.config?.session_modes) &&
@@ -396,25 +468,15 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   }
 
   get canBecomeReady() {
-    if (
-      !this.current?.accepted ||
-      this.terminal ||
-      !this.configurationConsent
-    ) {
+    if (!this.current?.accepted || this.terminal || !this.permissionsGranted) {
       return false;
     }
-    if (
-      this.needsHeartbeat &&
-      (!this.heartbeatConsent || this.current?.heartbeat_ready !== true)
-    ) {
+    if (this.needsHeartbeat && this.current?.heartbeat_ready !== true) {
       return false;
     }
     if (
       this.needsToy &&
-      (!this.toyConsent ||
-        !this.sdkReady ||
-        !this.appConnected ||
-        !this.toySelected)
+      (!this.sdkReady || !this.appConnected || !this.toySelected)
     ) {
       return false;
     }
@@ -594,7 +656,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   }
 
   get lockKey() {
-    return `interactive-heartbeat-controller:${this.token}:${this.config?.current_user?.id || "unknown"}`;
+    return `interactive-heartbeat-controller:${this.config?.current_user?.id || "unknown"}`;
   }
 
   setup() {
@@ -743,13 +805,15 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     this.error = null;
     try {
       const session = await ajax(
-        `/interactive-heartbeat/api/sessions/${this.token}/accept`,
+        `/interactive-heartbeat/api/sessions/${this.token}/join`,
         {
           type: "PUT",
+          data: { settings: this.participantSettingsPayload() },
         },
       );
       if (!this.destroyed) {
         this.applySession(session, true);
+        this.notice = t("interactive_heartbeat.session.joined_and_allowed");
       }
     } catch (error) {
       if (!this.destroyed) {
@@ -761,6 +825,89 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     } finally {
       if (!this.destroyed) {
         this.accepting = false;
+      }
+    }
+  }
+
+  participantSettingsPayload() {
+    return {
+      response_mode: this.responseMode,
+      max_intensity: this.maxIntensity,
+      min_intensity: this.minIntensity,
+      pulse_strength: this.pulseStrength,
+      pulse_duration_ms: this.pulseDurationMs,
+      zone_low_max_bpm: this.zoneLowMaxBpm,
+      zone_medium_max_bpm: this.zoneMediumMaxBpm,
+      zone_high_max_bpm: this.zoneHighMaxBpm,
+      zone_low_intensity: this.zoneLowIntensity,
+      zone_medium_intensity: this.zoneMediumIntensity,
+      zone_high_intensity: this.zoneHighIntensity,
+      zone_peak_intensity: this.zonePeakIntensity,
+      smooth_min_bpm: this.smoothMinBpm,
+      smooth_max_bpm: this.smoothMaxBpm,
+      baseline_bpm: this.baselineBpm,
+      relative_range_bpm: this.relativeRangeBpm,
+      ramp_up_per_second: this.rampUpPerSecond,
+      ramp_down_per_second: this.rampDownPerSecond,
+      hysteresis_bpm: this.hysteresisBpm,
+    };
+  }
+
+  @action
+  async grantPermissions() {
+    this.saving = true;
+    this.error = null;
+    try {
+      const session = await ajax(
+        `/interactive-heartbeat/api/sessions/${this.token}/permissions`,
+        {
+          type: "PUT",
+          data: { settings: this.participantSettingsPayload() },
+        },
+      );
+      if (!this.destroyed) {
+        this.applySession(session, true);
+        this.notice = t("interactive_heartbeat.session.permissions_allowed");
+      }
+    } catch (error) {
+      if (!this.destroyed) {
+        this.error = errorMessage(
+          error,
+          t("interactive_heartbeat.errors.update_failed"),
+        );
+      }
+    } finally {
+      if (!this.destroyed) {
+        this.saving = false;
+      }
+    }
+  }
+
+  @action
+  async revokePermissions() {
+    this.saving = true;
+    this.error = null;
+    this.ensurePulseEngine().stop("consent_revoked", { notifyToy: false });
+    await this.stopSelectedToyAction();
+    try {
+      const session = await ajax(
+        `/interactive-heartbeat/api/sessions/${this.token}/permissions/revoke`,
+        { type: "PUT" },
+      );
+      if (!this.destroyed) {
+        this.applySession(session, true);
+        this.notice = t("interactive_heartbeat.session.permissions_revoked");
+      }
+    } catch (error) {
+      if (!this.destroyed) {
+        this.error = errorMessage(
+          error,
+          t("interactive_heartbeat.errors.update_failed"),
+        );
+      }
+    } finally {
+      if (!this.destroyed) {
+        this.saving = false;
       }
     }
   }
@@ -952,27 +1099,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
             toy_consent: this.toyConsent,
             configuration_consent: this.configurationConsent,
             ready,
-            settings: {
-              response_mode: this.responseMode,
-              max_intensity: this.maxIntensity,
-              min_intensity: this.minIntensity,
-              pulse_strength: this.pulseStrength,
-              pulse_duration_ms: this.pulseDurationMs,
-              zone_low_max_bpm: this.zoneLowMaxBpm,
-              zone_medium_max_bpm: this.zoneMediumMaxBpm,
-              zone_high_max_bpm: this.zoneHighMaxBpm,
-              zone_low_intensity: this.zoneLowIntensity,
-              zone_medium_intensity: this.zoneMediumIntensity,
-              zone_high_intensity: this.zoneHighIntensity,
-              zone_peak_intensity: this.zonePeakIntensity,
-              smooth_min_bpm: this.smoothMinBpm,
-              smooth_max_bpm: this.smoothMaxBpm,
-              baseline_bpm: this.baselineBpm,
-              relative_range_bpm: this.relativeRangeBpm,
-              ramp_up_per_second: this.rampUpPerSecond,
-              ramp_down_per_second: this.rampDownPerSecond,
-              hysteresis_bpm: this.hysteresisBpm,
-            },
+            settings: this.participantSettingsPayload(),
           },
         },
       );
@@ -996,7 +1123,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
 
   @action
   async saveSetup() {
-    await this.saveParticipant(false);
+    await this.saveParticipant(this.current?.ready === true);
   }
 
   @action
@@ -1879,15 +2006,24 @@ export default class InteractiveHeartbeatSessionPage extends Component {
           {{/if}}
         </section>
 
+        <nav class="interactive-heartbeat__progress" aria-label={{t "interactive_heartbeat.session.progress_label"}}>
+          <ol>
+            {{#each this.progressSteps as |step|}}
+              <li class={{step.className}}>
+                <span class="interactive-heartbeat__step-marker">{{if step.complete "✓" ""}}</span>
+                <span>{{step.label}}</span>
+              </li>
+            {{/each}}
+          </ol>
+        </nav>
+
         {{#if this.invitationPending}}
           <section
             class="interactive-heartbeat__card interactive-heartbeat__invitation"
           >
             <h2>{{t "interactive_heartbeat.session.invitation"}}</h2>
             <p>
-              Review the requested directions below. Accepting only opens the
-              setup; no heartbeat or toy control starts until both members
-              separately consent and become ready.
+              {{t "interactive_heartbeat.session.invitation_simple_help"}}
             </p>
             <ul class="interactive-heartbeat__direction-list">
               {{#each this.directionRows as |direction|}}
@@ -1903,7 +2039,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                 {{#if this.accepting}}
                   {{t "interactive_heartbeat.session.accepting"}}
                 {{else}}
-                  {{t "interactive_heartbeat.session.accept"}}
+                  {{t "interactive_heartbeat.session.join_and_allow"}}
                 {{/if}}
               </button>
               <button
@@ -2044,43 +2180,40 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                 </div>
               </div>
 
-              {{#if this.supportsSharedModes}}
-                <label class="interactive-heartbeat__consent">
-                  <input
-                    type="checkbox"
-                    checked={{this.configurationConsent}}
-                    {{on "change" this.updateConfigurationConsent}}
-                  />
-                  <span>{{t
-                      "interactive_heartbeat.session.mode_consent"
-                      mode=this.configuredSessionModeLabel
-                    }}</span>
-                </label>
-              {{/if}}
-
-              {{#if this.needsHeartbeat}}
-                <label class="interactive-heartbeat__consent">
-                  <input
-                    type="checkbox"
-                    checked={{this.heartbeatConsent}}
-                    {{on "change" this.updateHeartbeatConsent}}
-                  />
-                  <span>{{t
-                      "interactive_heartbeat.session.heartbeat_consent"
-                    }}</span>
-                </label>
-              {{/if}}
+              <div class="interactive-heartbeat__permission-summary">
+                <div>
+                  <h3>{{t "interactive_heartbeat.session.permissions_title"}}</h3>
+                  <p>{{t "interactive_heartbeat.session.permissions_scope_help"}}</p>
+                  <ul class="interactive-heartbeat__direction-list">
+                    {{#each this.permissionSummaryRows as |row|}}
+                      <li>{{row}}</li>
+                    {{/each}}
+                  </ul>
+                </div>
+                <div class="interactive-heartbeat__permission-actions">
+                  {{#if this.permissionsGranted}}
+                    <span class="interactive-heartbeat__permission-status interactive-heartbeat__permission-status--allowed">
+                      {{t "interactive_heartbeat.session.permissions_allowed_status"}}
+                    </span>
+                    <button type="button" class="btn btn-danger" disabled={{this.saving}} {{on "click" this.revokePermissions}}>
+                      {{t "interactive_heartbeat.session.withdraw_permissions"}}
+                    </button>
+                  {{else}}
+                    <button type="button" class="btn btn-primary" disabled={{this.saving}} {{on "click" this.grantPermissions}}>
+                      {{#if this.modeApprovalNeeded}}
+                        {{t "interactive_heartbeat.session.accept_mode_and_allow"}}
+                      {{else}}
+                        {{t "interactive_heartbeat.session.allow_for_session"}}
+                      {{/if}}
+                    </button>
+                  {{/if}}
+                </div>
+              </div>
 
               {{#if this.needsToy}}
-                <label class="interactive-heartbeat__consent">
-                  <input
-                    type="checkbox"
-                    checked={{this.toyConsent}}
-                    {{on "change" this.updateToyConsent}}
-                  />
-                  <span>{{t "interactive_heartbeat.session.toy_consent"}}</span>
-                </label>
-
+                <details class="interactive-heartbeat__advanced-settings">
+                  <summary>{{t "interactive_heartbeat.session.advanced_toy_settings"}}</summary>
+                  <div class="interactive-heartbeat__advanced-settings-body">
                 <fieldset
                   class="interactive-heartbeat__choice-fieldset"
                   disabled={{this.modeUsesSyncIntensity}}
@@ -2416,16 +2549,20 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                       "interactive_heartbeat.session.pulse_duration_help"
                     }}</small>
                 </label>
+                  </div>
+                </details>
               {{/if}}
 
               <div class="interactive-heartbeat__actions">
-                <button type="button" class="btn" {{on "click" this.saveSetup}}>
+                {{#if this.needsToy}}
+                <button type="button" class="btn" disabled={{this.saving}} {{on "click" this.saveSetup}}>
                   {{#if this.saving}}
                     {{t "interactive_heartbeat.session.saving"}}
                   {{else}}
                     {{t "interactive_heartbeat.session.save"}}
                   {{/if}}
                 </button>
+                {{/if}}
                 <button
                   type="button"
                   class="btn btn-primary"

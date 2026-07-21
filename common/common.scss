@@ -558,3 +558,206 @@
     grid-template-columns: 1fr;
   }
 }
+
+.interactive-heartbeat__progress {
+  margin: 0 0 1rem;
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--primary-low);
+  border-radius: 12px;
+  background: var(--secondary);
+
+  ol {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.4rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+}
+
+.interactive-heartbeat__step {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 0.45rem;
+  color: var(--primary-medium);
+  font-size: var(--font-down-1);
+  font-weight: 700;
+
+  &::after {
+    content: "";
+    flex: 1 1 auto;
+    min-width: 0.4rem;
+    height: 2px;
+    background: var(--primary-low);
+  }
+
+  &:last-child::after {
+    display: none;
+  }
+}
+
+.interactive-heartbeat__step-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 1.65rem;
+  width: 1.65rem;
+  height: 1.65rem;
+  border: 2px solid var(--primary-low-mid);
+  border-radius: 50%;
+  background: var(--secondary);
+  color: var(--primary-medium);
+  line-height: 1;
+}
+
+.interactive-heartbeat__step--current {
+  color: var(--primary);
+
+  .interactive-heartbeat__step-marker {
+    border-color: var(--tertiary);
+    box-shadow: 0 0 0 3px var(--tertiary-very-low);
+  }
+}
+
+.interactive-heartbeat__step--complete {
+  color: var(--primary);
+
+  .interactive-heartbeat__step-marker {
+    border-color: var(--success);
+    background: var(--success);
+    color: var(--secondary);
+  }
+
+  &::after {
+    background: var(--success);
+  }
+}
+
+.interactive-heartbeat__permission-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--primary-low);
+  border-radius: 12px;
+  background: var(--primary-very-low);
+
+  h3 {
+    margin: 0 0 0.25rem;
+  }
+
+  p {
+    margin: 0 0 0.65rem;
+    color: var(--primary-medium);
+  }
+}
+
+.interactive-heartbeat__permission-actions {
+  display: grid;
+  justify-items: end;
+  gap: 0.55rem;
+  min-width: max-content;
+}
+
+.interactive-heartbeat__permission-status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.3rem 0.65rem;
+  font-size: var(--font-down-1);
+  font-weight: 800;
+}
+
+.interactive-heartbeat__permission-status--allowed {
+  background: var(--success-low);
+  color: var(--success);
+}
+
+.interactive-heartbeat__advanced-settings {
+  margin-top: 0.75rem;
+  border: 1px solid var(--primary-low);
+  border-radius: 12px;
+  background: var(--secondary);
+
+  > summary {
+    cursor: pointer;
+    padding: 0.85rem 1rem;
+    font-weight: 800;
+  }
+}
+
+.interactive-heartbeat__advanced-settings-body {
+  padding: 0 1rem 1rem;
+}
+
+.interactive-heartbeat__test-lab-entry {
+  border-color: var(--tertiary-medium);
+  background: var(--tertiary-very-low);
+}
+
+.interactive-heartbeat__test-grid,
+.interactive-heartbeat__diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem 1rem;
+}
+
+.interactive-heartbeat__test-grid > div,
+.interactive-heartbeat__diagnostics-grid > div {
+  min-width: 0;
+}
+
+.interactive-heartbeat__diagnostics-grid > div {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.65rem;
+  border: 1px solid var(--primary-low);
+  border-radius: 10px;
+  background: var(--secondary);
+
+  span {
+    color: var(--primary-medium);
+    font-size: var(--font-down-1);
+  }
+
+  strong {
+    overflow-wrap: anywhere;
+  }
+}
+
+.interactive-heartbeat--test-lab .interactive-heartbeat__hero {
+  border-color: var(--tertiary-medium);
+}
+
+.interactive-heartbeat__test-preview {
+  border-color: var(--success);
+}
+
+@media (max-width: 800px) {
+  .interactive-heartbeat__progress {
+    overflow-x: auto;
+
+    ol {
+      min-width: 620px;
+    }
+  }
+
+  .interactive-heartbeat__permission-summary,
+  .interactive-heartbeat__test-grid,
+  .interactive-heartbeat__diagnostics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .interactive-heartbeat__permission-actions {
+    justify-items: stretch;
+    min-width: 0;
+
+    .btn {
+      width: 100%;
+    }
+  }
+}

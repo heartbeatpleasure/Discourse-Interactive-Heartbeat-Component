@@ -286,8 +286,7 @@ export default class InteractiveHeartbeatPage extends Component {
           <div class="interactive-heartbeat__card-header">
             <div>
               <h2>{{t "interactive_heartbeat.overview.new_session"}}</h2>
-              <p>Both participants must explicitly accept the session and
-                consent to each active direction.</p>
+              <p>{{t "interactive_heartbeat.overview.new_session_help"}}</p>
             </div>
           </div>
 
@@ -357,10 +356,25 @@ export default class InteractiveHeartbeatPage extends Component {
             {{#if this.creating}}
               {{t "interactive_heartbeat.overview.creating"}}
             {{else}}
-              {{t "interactive_heartbeat.overview.create"}}
+              {{t "interactive_heartbeat.overview.create_and_allow"}}
             {{/if}}
           </button>
         </section>
+
+        {{#if this.config.test_lab_enabled}}
+          <section class="interactive-heartbeat__card interactive-heartbeat__test-lab-entry">
+            <div class="interactive-heartbeat__card-header">
+              <div>
+                <span class="interactive-heartbeat__eyebrow">Admin only</span>
+                <h2>{{t "interactive_heartbeat.test_lab.title"}}</h2>
+                <p>{{t "interactive_heartbeat.test_lab.entry_help"}}</p>
+              </div>
+              <a class="btn btn-primary" href={{this.config.test_lab_url}}>
+                {{t "interactive_heartbeat.test_lab.open"}}
+              </a>
+            </div>
+          </section>
+        {{/if}}
 
         <section class="interactive-heartbeat__card">
           <div class="interactive-heartbeat__card-header">
