@@ -48,7 +48,7 @@ en:
       awaiting_acceptance: "Approval needed"
       propose_mode: "Propose this mode"
       mode_proposed: "The mode proposal was saved. Both participants must accept it before the session can start."
-      mode_waiting_for_acceptance: "Both participants must first accept the invitation before the mode can be changed."
+      mode_waiting_for_acceptance: "Accept the invitation before changing the session mode."
       mode_consent: "I agree to use %{mode} in this private session"
       heartbeat_consent: "Allow my live heartbeat to be used by the selected session mode"
       toy_consent: "Allow this session to control my connected toy within my personal limits"

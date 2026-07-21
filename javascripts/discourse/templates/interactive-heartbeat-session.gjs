@@ -3,6 +3,10 @@ import InteractiveHeartbeatSessionPage from "../components/interactive-heartbeat
 
 export default RouteTemplate(
   <template>
-    <InteractiveHeartbeatSessionPage @token={{@model.token}} />
+    <InteractiveHeartbeatSessionPage
+      @token={{@model.token}}
+      @initialSession={{@model.session}}
+      @initialConfig={{@model.config}}
+    />
   </template>,
 );

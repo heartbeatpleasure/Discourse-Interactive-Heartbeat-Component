@@ -435,7 +435,6 @@
   }
 }
 
-
 .interactive-heartbeat__mode-card {
   border-color: var(--tertiary-medium);
 }
@@ -474,6 +473,88 @@
 @media (max-width: 800px) {
   .interactive-heartbeat__mode-grid,
   .interactive-heartbeat__settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+// Native <select>/<option> trees can be normalized by the browser while
+// Glimmer is updating them. These radio-card controls keep the DOM stable and
+// make the selected mode visible without opening a dropdown.
+.interactive-heartbeat__choice-fieldset {
+  min-width: 0;
+  margin: 0 0 1rem;
+  padding: 0;
+  border: 0;
+
+  legend {
+    margin-bottom: 0.45rem;
+    padding: 0;
+    font-weight: 800;
+  }
+
+  &[disabled] {
+    opacity: 0.65;
+  }
+}
+
+.interactive-heartbeat__choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.interactive-heartbeat__choice-grid--compact {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.interactive-heartbeat__choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--primary-low-mid);
+  border-radius: 10px;
+  background: var(--secondary);
+  cursor: pointer;
+
+  &:has(input:checked) {
+    border-color: var(--tertiary);
+    box-shadow: 0 0 0 1px var(--tertiary);
+    background: var(--tertiary-very-low);
+  }
+
+  &:has(input:focus-visible) {
+    outline: 2px solid var(--tertiary);
+    outline-offset: 2px;
+  }
+
+  input {
+    flex: 0 0 auto;
+    margin-top: 0.2rem;
+  }
+}
+
+.interactive-heartbeat__choice-content {
+  display: grid;
+  min-width: 0;
+  gap: 0.15rem;
+
+  strong,
+  small {
+    overflow-wrap: anywhere;
+  }
+
+  small {
+    color: var(--primary-medium);
+    font-weight: 400;
+  }
+}
+
+@media (max-width: 800px) {
+  .interactive-heartbeat__choice-grid,
+  .interactive-heartbeat__choice-grid--compact {
     grid-template-columns: 1fr;
   }
 }

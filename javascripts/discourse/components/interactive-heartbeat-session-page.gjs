@@ -2,6 +2,7 @@ import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
 import { on } from "@ember/modifier";
+import { scheduleOnce } from "@ember/runloop";
 import { ajax } from "discourse/lib/ajax";
 import HeartbeatPulseEngine from "../lib/interactive-heartbeat/pulse-engine";
 import {
@@ -184,13 +185,17 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   constructor(owner, args) {
     super(owner, args);
 
-    // This component does not need the DOM to load its data. Starting in a
-    // microtask avoids render modifiers and their detached-node lifecycle.
-    Promise.resolve().then(() => {
-      if (!this.destroyed) {
-        this.setup();
-      }
-    });
+    // Hydrate all render-critical state before the first template render.
+    // This avoids switching a large dynamic tree from loading to loaded while
+    // Glimmer is still establishing DOM bounds for the route component.
+    this.config = args.initialConfig || null;
+    if (args.initialSession) {
+      this.applySession(args.initialSession, true, { manageRuntime: false });
+      this.loading = false;
+    }
+
+    // Timers and signal polling only start after the initial render commits.
+    scheduleOnce("afterRender", this, this.setup);
   }
 
   willDestroy() {
@@ -255,11 +260,17 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   }
 
   get supportsSharedModes() {
-    return Array.isArray(this.config?.session_modes) && this.config.session_modes.length > 0;
+    return (
+      Array.isArray(this.config?.session_modes) &&
+      this.config.session_modes.length > 0
+    );
   }
 
   get supportsResponseModes() {
-    return Array.isArray(this.config?.response_modes) && this.config.response_modes.length > 0;
+    return (
+      Array.isArray(this.config?.response_modes) &&
+      this.config.response_modes.length > 0
+    );
   }
 
   get sessionModeOptions() {
@@ -286,7 +297,9 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   }
 
   get selectedSessionMode() {
-    return this.sessionModeOptions.find((option) => option.value === this.sessionMode);
+    return this.sessionModeOptions.find(
+      (option) => option.value === this.sessionMode,
+    );
   }
 
   get selectedSessionModeLabel() {
@@ -313,9 +326,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   }
 
   get canEditConfiguration() {
-    return Boolean(
-      this.current?.accepted && this.other?.accepted && !this.terminal,
-    );
+    return Boolean(this.current?.accepted && !this.terminal);
   }
 
   get configurationEditDisabled() {
@@ -323,7 +334,9 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   }
 
   get configurationSaveDisabled() {
-    return !this.canEditConfiguration || !this.configurationDirty || this.saving;
+    return (
+      !this.canEditConfiguration || !this.configurationDirty || this.saving
+    );
   }
 
   get leaderOptions() {
@@ -383,7 +396,11 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   }
 
   get canBecomeReady() {
-    if (!this.current?.accepted || this.terminal || !this.configurationConsent) {
+    if (
+      !this.current?.accepted ||
+      this.terminal ||
+      !this.configurationConsent
+    ) {
       return false;
     }
     if (
@@ -545,7 +562,8 @@ export default class InteractiveHeartbeatSessionPage extends Component {
   }
 
   get responseModeLabel() {
-    const mode = this.currentSignal?.response?.mode || this.responseMode || "fixed";
+    const mode =
+      this.currentSignal?.response?.mode || this.responseMode || "fixed";
     if (mode === "sync") {
       return t("interactive_heartbeat.response_modes.sync.label");
     }
@@ -585,14 +603,32 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     }
 
     this.setupStarted = true;
-    const generation = this.lifecycleGeneration;
-    void this.load(true).finally(() => {
-      if (this.isCurrentLifecycle(generation) && !this.refreshTimer) {
-        this.refreshTimer = window.setInterval(() => {
-          void this.load(false);
-        }, 3000);
-      }
-    });
+    this.syncSessionRuntime();
+
+    if (!this.refreshTimer) {
+      this.refreshTimer = window.setInterval(() => {
+        void this.load(false);
+      }, 3000);
+    }
+  }
+
+  syncSessionRuntime() {
+    if (
+      this.session?.status === "active" &&
+      this.session?.current_user?.needs_toy_consent === true
+    ) {
+      this.startSignalPolling();
+      return;
+    }
+
+    const stopReason = this.signalLossLatched
+      ? "signal_lost"
+      : "session_not_active";
+    this.signalLossPauseRequested = false;
+    this.stopSignalPolling(stopReason);
+    if (stopReason !== "signal_lost") {
+      this.signalLossLatched = false;
+    }
   }
 
   async load(forceSetup = false) {
@@ -643,7 +679,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     }
   }
 
-  applySession(session, forceSetup = false) {
+  applySession(session, forceSetup = false, { manageRuntime = true } = {}) {
     if (this.destroyed || !session) {
       return;
     }
@@ -696,20 +732,8 @@ export default class InteractiveHeartbeatSessionPage extends Component {
       this.hysteresisBpm = Number(settings.hysteresis_bpm ?? 3);
     }
 
-    if (
-      session?.status === "active" &&
-      session?.current_user?.needs_toy_consent === true
-    ) {
-      this.startSignalPolling();
-    } else {
-      const stopReason = this.signalLossLatched
-        ? "signal_lost"
-        : "session_not_active";
-      this.signalLossPauseRequested = false;
-      this.stopSignalPolling(stopReason);
-      if (stopReason !== "signal_lost") {
-        this.signalLossLatched = false;
-      }
+    if (manageRuntime) {
+      this.syncSessionRuntime();
     }
   }
 
@@ -853,7 +877,10 @@ export default class InteractiveHeartbeatSessionPage extends Component {
       case "minIntensity":
         this.minIntensity = Math.min(value, this.maxIntensity);
         this.pulseStrength = Math.max(this.pulseStrength, this.minIntensity);
-        this.zoneLowIntensity = Math.max(this.zoneLowIntensity, this.minIntensity);
+        this.zoneLowIntensity = Math.max(
+          this.zoneLowIntensity,
+          this.minIntensity,
+        );
         break;
       case "pulseStrength":
         this.pulseStrength = Math.max(
@@ -1042,7 +1069,9 @@ export default class InteractiveHeartbeatSessionPage extends Component {
         return;
       }
       this.applySession(session, true);
-      this.ensurePulseEngine().stop(`session_${actionName}`, { notifyToy: false });
+      this.ensurePulseEngine().stop(`session_${actionName}`, {
+        notifyToy: false,
+      });
       await this.stopSelectedToyAction();
     } catch (error) {
       if (!this.destroyed) {
@@ -1424,11 +1453,10 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     const nowMs = Date.now();
 
     if (
-      !shouldReplaceHeartbeatPattern(
-        this.activeHeartbeatPattern,
-        nextPattern,
-        { nowMs, refreshAtMs: this.patternRefreshAtMs },
-      )
+      !shouldReplaceHeartbeatPattern(this.activeHeartbeatPattern, nextPattern, {
+        nowMs,
+        refreshAtMs: this.patternRefreshAtMs,
+      })
     ) {
       return {
         status: "active",
@@ -1454,11 +1482,12 @@ export default class InteractiveHeartbeatSessionPage extends Component {
       }
 
       const acceptedAtMs = Date.now();
-      this.activeHeartbeatPattern = { ...nextPattern, updated_at_ms: acceptedAtMs };
-      this.patternRefreshAtMs =
-        acceptedAtMs + nextPattern.refresh_after_ms;
-      this.patternExpiresAtMs =
-        acceptedAtMs + nextPattern.run_seconds * 1000;
+      this.activeHeartbeatPattern = {
+        ...nextPattern,
+        updated_at_ms: acceptedAtMs,
+      };
+      this.patternRefreshAtMs = acceptedAtMs + nextPattern.refresh_after_ms;
+      this.patternExpiresAtMs = acceptedAtMs + nextPattern.run_seconds * 1000;
       this.controlling = true;
       this.clearLovenseError();
       window.clearTimeout(this.pulseStopTimer);
@@ -1892,78 +1921,117 @@ export default class InteractiveHeartbeatSessionPage extends Component {
           </section>
         {{else}}
           {{#if this.supportsSharedModes}}
-            <section class="interactive-heartbeat__card interactive-heartbeat__mode-card">
-            <div class="interactive-heartbeat__card-header">
-              <div>
-                <h2>{{t "interactive_heartbeat.session.mode_title"}}</h2>
-                <p>{{this.selectedSessionModeDescription}}</p>
+            <section
+              class="interactive-heartbeat__card interactive-heartbeat__mode-card"
+            >
+              <div class="interactive-heartbeat__card-header">
+                <div>
+                  <h2>{{t "interactive_heartbeat.session.mode_title"}}</h2>
+                  <p>{{this.selectedSessionModeDescription}}</p>
+                </div>
               </div>
-            </div>
 
-            <div class="interactive-heartbeat__mode-grid">
-              <label class="interactive-heartbeat__field">
-                <span>{{t "interactive_heartbeat.session.mode"}}</span>
-                <select
+              <div class="interactive-heartbeat__mode-grid">
+                <fieldset
+                  class="interactive-heartbeat__choice-fieldset"
                   disabled={{this.configurationEditDisabled}}
-                  {{on "change" this.updateSessionMode}}
                 >
-                  {{#each this.sessionModeOptions as |option|}}
-                    <option value={{option.value}} selected={{option.selected}}>
-                      {{option.label}}
-                    </option>
-                  {{/each}}
-                </select>
-              </label>
-
-              {{#if this.modeRequiresLeader}}
-                <label class="interactive-heartbeat__field">
-                  <span>{{t "interactive_heartbeat.session.leader"}}</span>
-                  <select
-                    disabled={{this.configurationEditDisabled}}
-                    {{on "change" this.updateLeaderUser}}
+                  <legend>{{t "interactive_heartbeat.session.mode"}}</legend>
+                  <div
+                    class="interactive-heartbeat__choice-grid"
+                    role="radiogroup"
+                    aria-label={{t "interactive_heartbeat.session.mode"}}
                   >
-                    {{#each this.leaderOptions as |option|}}
-                      <option value={{option.id}} selected={{option.selected}}>
-                        {{option.username}}
-                      </option>
+                    {{#each this.sessionModeOptions as |option|}}
+                      <label class="interactive-heartbeat__choice">
+                        <input
+                          type="radio"
+                          name="interactive-heartbeat-session-mode"
+                          value={{option.value}}
+                          checked={{option.selected}}
+                          {{on "change" this.updateSessionMode}}
+                        />
+                        <span class="interactive-heartbeat__choice-content">
+                          <strong>{{option.label}}</strong>
+                          <small>{{option.description}}</small>
+                        </span>
+                      </label>
                     {{/each}}
-                  </select>
-                </label>
-              {{/if}}
-            </div>
+                  </div>
+                </fieldset>
 
-            <ul class="interactive-heartbeat__direction-list">
-              {{#each this.directionRows as |direction|}}
-                <li>{{direction}}</li>
-              {{/each}}
-            </ul>
+                {{#if this.modeRequiresLeader}}
+                  <fieldset
+                    class="interactive-heartbeat__choice-fieldset"
+                    disabled={{this.configurationEditDisabled}}
+                  >
+                    <legend>{{t
+                        "interactive_heartbeat.session.leader"
+                      }}</legend>
+                    <div
+                      class="interactive-heartbeat__choice-grid interactive-heartbeat__choice-grid--compact"
+                      role="radiogroup"
+                      aria-label={{t "interactive_heartbeat.session.leader"}}
+                    >
+                      {{#each this.leaderOptions as |option|}}
+                        <label class="interactive-heartbeat__choice">
+                          <input
+                            type="radio"
+                            name="interactive-heartbeat-leader"
+                            value={{option.id}}
+                            checked={{option.selected}}
+                            {{on "change" this.updateLeaderUser}}
+                          />
+                          <span class="interactive-heartbeat__choice-content">
+                            <strong>{{option.username}}</strong>
+                          </span>
+                        </label>
+                      {{/each}}
+                    </div>
+                  </fieldset>
+                {{/if}}
+              </div>
 
-            <div class="interactive-heartbeat__configuration-status">
-              <span>
-                {{t "interactive_heartbeat.session.mode_you"}}:
-                {{if this.current.configuration_accepted (t "interactive_heartbeat.session.accepted") (t "interactive_heartbeat.session.awaiting_acceptance")}}
-              </span>
-              <span>
-                {{this.other.user.username}}:
-                {{if this.other.configuration_accepted (t "interactive_heartbeat.session.accepted") (t "interactive_heartbeat.session.awaiting_acceptance")}}
-              </span>
-            </div>
+              <ul class="interactive-heartbeat__direction-list">
+                {{#each this.directionRows as |direction|}}
+                  <li>{{direction}}</li>
+                {{/each}}
+              </ul>
 
-            <div class="interactive-heartbeat__actions">
-              <button
-                type="button"
-                class="btn btn-primary"
-                disabled={{this.configurationSaveDisabled}}
-                {{on "click" this.saveConfiguration}}
-              >
-                {{t "interactive_heartbeat.session.propose_mode"}}
-              </button>
-              {{#unless this.canEditConfiguration}}
-                <small class="interactive-heartbeat__muted">{{t
-                    "interactive_heartbeat.session.mode_waiting_for_acceptance"
-                  }}</small>
-              {{/unless}}
-            </div>
+              <div class="interactive-heartbeat__configuration-status">
+                <span>
+                  {{t "interactive_heartbeat.session.mode_you"}}:
+                  {{if
+                    this.current.configuration_accepted
+                    (t "interactive_heartbeat.session.accepted")
+                    (t "interactive_heartbeat.session.awaiting_acceptance")
+                  }}
+                </span>
+                <span>
+                  {{this.other.user.username}}:
+                  {{if
+                    this.other.configuration_accepted
+                    (t "interactive_heartbeat.session.accepted")
+                    (t "interactive_heartbeat.session.awaiting_acceptance")
+                  }}
+                </span>
+              </div>
+
+              <div class="interactive-heartbeat__actions">
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  disabled={{this.configurationSaveDisabled}}
+                  {{on "click" this.saveConfiguration}}
+                >
+                  {{t "interactive_heartbeat.session.propose_mode"}}
+                </button>
+                {{#unless this.canEditConfiguration}}
+                  <small class="interactive-heartbeat__muted">{{t
+                      "interactive_heartbeat.session.mode_waiting_for_acceptance"
+                    }}</small>
+                {{/unless}}
+              </div>
             </section>
           {{/if}}
 
@@ -2013,19 +2081,36 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                   <span>{{t "interactive_heartbeat.session.toy_consent"}}</span>
                 </label>
 
-                <label class="interactive-heartbeat__field">
-                  <span>{{t "interactive_heartbeat.session.response_mode"}}</span>
-                  <select
-                    disabled={{this.modeUsesSyncIntensity}}
-                    {{on "change" this.updateResponseMode}}
+                <fieldset
+                  class="interactive-heartbeat__choice-fieldset"
+                  disabled={{this.modeUsesSyncIntensity}}
+                >
+                  <legend>{{t
+                      "interactive_heartbeat.session.response_mode"
+                    }}</legend>
+                  <div
+                    class="interactive-heartbeat__choice-grid interactive-heartbeat__choice-grid--compact"
+                    role="radiogroup"
+                    aria-label={{t
+                      "interactive_heartbeat.session.response_mode"
+                    }}
                   >
                     {{#each this.responseModeOptions as |option|}}
-                      <option value={{option.value}} selected={{option.selected}}>
-                        {{option.label}}
-                      </option>
+                      <label class="interactive-heartbeat__choice">
+                        <input
+                          type="radio"
+                          name="interactive-heartbeat-response-mode"
+                          value={{option.value}}
+                          checked={{option.selected}}
+                          {{on "change" this.updateResponseMode}}
+                        />
+                        <span class="interactive-heartbeat__choice-content">
+                          <strong>{{option.label}}</strong>
+                        </span>
+                      </label>
                     {{/each}}
-                  </select>
-                </label>
+                  </div>
+                </fieldset>
 
                 <div class="interactive-heartbeat__settings-grid">
                   <label class="interactive-heartbeat__range-field">
@@ -2058,7 +2143,9 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                 </div>
 
                 {{#if this.modeUsesSyncIntensity}}
-                  <p class="interactive-heartbeat__muted">{{t "interactive_heartbeat.session.sync_intensity_help"}}</p>
+                  <p class="interactive-heartbeat__muted">{{t
+                      "interactive_heartbeat.session.sync_intensity_help"
+                    }}</p>
                 {{/if}}
 
                 {{#if this.showFixedIntensity}}
@@ -2078,59 +2165,165 @@ export default class InteractiveHeartbeatSessionPage extends Component {
 
                 {{#if this.responseIsZones}}
                   <fieldset class="interactive-heartbeat__fieldset">
-                    <legend>{{t "interactive_heartbeat.session.zone_settings"}}</legend>
-                    <div class="interactive-heartbeat__settings-grid interactive-heartbeat__settings-grid--zones">
+                    <legend>{{t
+                        "interactive_heartbeat.session.zone_settings"
+                      }}</legend>
+                    <div
+                      class="interactive-heartbeat__settings-grid interactive-heartbeat__settings-grid--zones"
+                    >
                       <label class="interactive-heartbeat__field">
-                        <span>{{t "interactive_heartbeat.session.zone_low_max"}}</span>
-                        <input type="number" min="45" max="180" value={{this.zoneLowMaxBpm}} data-setting="zoneLowMaxBpm" {{on "change" this.updateResponseSetting}} />
+                        <span>{{t
+                            "interactive_heartbeat.session.zone_low_max"
+                          }}</span>
+                        <input
+                          type="number"
+                          min="45"
+                          max="180"
+                          value={{this.zoneLowMaxBpm}}
+                          data-setting="zoneLowMaxBpm"
+                          {{on "change" this.updateResponseSetting}}
+                        />
                       </label>
                       <label class="interactive-heartbeat__range-field">
-                        <span>{{t "interactive_heartbeat.session.zone_low_intensity"}}: {{this.zoneLowIntensity}}/20</span>
-                        <input type="range" min={{this.minIntensity}} max={{this.maxIntensity}} value={{this.zoneLowIntensity}} data-setting="zoneLowIntensity" {{on "input" this.updateResponseSetting}} />
+                        <span>{{t
+                            "interactive_heartbeat.session.zone_low_intensity"
+                          }}:
+                          {{this.zoneLowIntensity}}/20</span>
+                        <input
+                          type="range"
+                          min={{this.minIntensity}}
+                          max={{this.maxIntensity}}
+                          value={{this.zoneLowIntensity}}
+                          data-setting="zoneLowIntensity"
+                          {{on "input" this.updateResponseSetting}}
+                        />
                       </label>
                       <label class="interactive-heartbeat__field">
-                        <span>{{t "interactive_heartbeat.session.zone_medium_max"}}</span>
-                        <input type="number" min="50" max="200" value={{this.zoneMediumMaxBpm}} data-setting="zoneMediumMaxBpm" {{on "change" this.updateResponseSetting}} />
+                        <span>{{t
+                            "interactive_heartbeat.session.zone_medium_max"
+                          }}</span>
+                        <input
+                          type="number"
+                          min="50"
+                          max="200"
+                          value={{this.zoneMediumMaxBpm}}
+                          data-setting="zoneMediumMaxBpm"
+                          {{on "change" this.updateResponseSetting}}
+                        />
                       </label>
                       <label class="interactive-heartbeat__range-field">
-                        <span>{{t "interactive_heartbeat.session.zone_medium_intensity"}}: {{this.zoneMediumIntensity}}/20</span>
-                        <input type="range" min={{this.minIntensity}} max={{this.maxIntensity}} value={{this.zoneMediumIntensity}} data-setting="zoneMediumIntensity" {{on "input" this.updateResponseSetting}} />
+                        <span>{{t
+                            "interactive_heartbeat.session.zone_medium_intensity"
+                          }}:
+                          {{this.zoneMediumIntensity}}/20</span>
+                        <input
+                          type="range"
+                          min={{this.minIntensity}}
+                          max={{this.maxIntensity}}
+                          value={{this.zoneMediumIntensity}}
+                          data-setting="zoneMediumIntensity"
+                          {{on "input" this.updateResponseSetting}}
+                        />
                       </label>
                       <label class="interactive-heartbeat__field">
-                        <span>{{t "interactive_heartbeat.session.zone_high_max"}}</span>
-                        <input type="number" min="55" max="215" value={{this.zoneHighMaxBpm}} data-setting="zoneHighMaxBpm" {{on "change" this.updateResponseSetting}} />
+                        <span>{{t
+                            "interactive_heartbeat.session.zone_high_max"
+                          }}</span>
+                        <input
+                          type="number"
+                          min="55"
+                          max="215"
+                          value={{this.zoneHighMaxBpm}}
+                          data-setting="zoneHighMaxBpm"
+                          {{on "change" this.updateResponseSetting}}
+                        />
                       </label>
                       <label class="interactive-heartbeat__range-field">
-                        <span>{{t "interactive_heartbeat.session.zone_high_intensity"}}: {{this.zoneHighIntensity}}/20</span>
-                        <input type="range" min={{this.minIntensity}} max={{this.maxIntensity}} value={{this.zoneHighIntensity}} data-setting="zoneHighIntensity" {{on "input" this.updateResponseSetting}} />
+                        <span>{{t
+                            "interactive_heartbeat.session.zone_high_intensity"
+                          }}:
+                          {{this.zoneHighIntensity}}/20</span>
+                        <input
+                          type="range"
+                          min={{this.minIntensity}}
+                          max={{this.maxIntensity}}
+                          value={{this.zoneHighIntensity}}
+                          data-setting="zoneHighIntensity"
+                          {{on "input" this.updateResponseSetting}}
+                        />
                       </label>
-                      <div class="interactive-heartbeat__field interactive-heartbeat__field--spacer">
-                        <span>{{t "interactive_heartbeat.session.zone_peak"}}</span>
-                        <small class="interactive-heartbeat__muted">{{t "interactive_heartbeat.session.zone_peak_help"}}</small>
+                      <div
+                        class="interactive-heartbeat__field interactive-heartbeat__field--spacer"
+                      >
+                        <span>{{t
+                            "interactive_heartbeat.session.zone_peak"
+                          }}</span>
+                        <small class="interactive-heartbeat__muted">{{t
+                            "interactive_heartbeat.session.zone_peak_help"
+                          }}</small>
                       </div>
                       <label class="interactive-heartbeat__range-field">
-                        <span>{{t "interactive_heartbeat.session.zone_peak_intensity"}}: {{this.zonePeakIntensity}}/20</span>
-                        <input type="range" min={{this.minIntensity}} max={{this.maxIntensity}} value={{this.zonePeakIntensity}} data-setting="zonePeakIntensity" {{on "input" this.updateResponseSetting}} />
+                        <span>{{t
+                            "interactive_heartbeat.session.zone_peak_intensity"
+                          }}:
+                          {{this.zonePeakIntensity}}/20</span>
+                        <input
+                          type="range"
+                          min={{this.minIntensity}}
+                          max={{this.maxIntensity}}
+                          value={{this.zonePeakIntensity}}
+                          data-setting="zonePeakIntensity"
+                          {{on "input" this.updateResponseSetting}}
+                        />
                       </label>
                     </div>
                     <label class="interactive-heartbeat__range-field">
-                      <span>{{t "interactive_heartbeat.session.hysteresis"}}: {{this.hysteresisBpm}} BPM</span>
-                      <input type="range" min="0" max="10" value={{this.hysteresisBpm}} data-setting="hysteresisBpm" {{on "input" this.updateResponseSetting}} />
+                      <span>{{t "interactive_heartbeat.session.hysteresis"}}:
+                        {{this.hysteresisBpm}}
+                        BPM</span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="10"
+                        value={{this.hysteresisBpm}}
+                        data-setting="hysteresisBpm"
+                        {{on "input" this.updateResponseSetting}}
+                      />
                     </label>
                   </fieldset>
                 {{/if}}
 
                 {{#if this.responseIsSmooth}}
                   <fieldset class="interactive-heartbeat__fieldset">
-                    <legend>{{t "interactive_heartbeat.session.smooth_settings"}}</legend>
+                    <legend>{{t
+                        "interactive_heartbeat.session.smooth_settings"
+                      }}</legend>
                     <div class="interactive-heartbeat__settings-grid">
                       <label class="interactive-heartbeat__field">
-                        <span>{{t "interactive_heartbeat.session.smooth_min_bpm"}}</span>
-                        <input type="number" min="40" max="180" value={{this.smoothMinBpm}} data-setting="smoothMinBpm" {{on "change" this.updateResponseSetting}} />
+                        <span>{{t
+                            "interactive_heartbeat.session.smooth_min_bpm"
+                          }}</span>
+                        <input
+                          type="number"
+                          min="40"
+                          max="180"
+                          value={{this.smoothMinBpm}}
+                          data-setting="smoothMinBpm"
+                          {{on "change" this.updateResponseSetting}}
+                        />
                       </label>
                       <label class="interactive-heartbeat__field">
-                        <span>{{t "interactive_heartbeat.session.smooth_max_bpm"}}</span>
-                        <input type="number" min="50" max="220" value={{this.smoothMaxBpm}} data-setting="smoothMaxBpm" {{on "change" this.updateResponseSetting}} />
+                        <span>{{t
+                            "interactive_heartbeat.session.smooth_max_bpm"
+                          }}</span>
+                        <input
+                          type="number"
+                          min="50"
+                          max="220"
+                          value={{this.smoothMaxBpm}}
+                          data-setting="smoothMaxBpm"
+                          {{on "change" this.updateResponseSetting}}
+                        />
                       </label>
                     </div>
                   </fieldset>
@@ -2138,15 +2331,35 @@ export default class InteractiveHeartbeatSessionPage extends Component {
 
                 {{#if this.responseIsRelative}}
                   <fieldset class="interactive-heartbeat__fieldset">
-                    <legend>{{t "interactive_heartbeat.session.relative_settings"}}</legend>
+                    <legend>{{t
+                        "interactive_heartbeat.session.relative_settings"
+                      }}</legend>
                     <div class="interactive-heartbeat__settings-grid">
                       <label class="interactive-heartbeat__field">
-                        <span>{{t "interactive_heartbeat.session.baseline_bpm"}}</span>
-                        <input type="number" min="40" max="180" value={{this.baselineBpm}} data-setting="baselineBpm" {{on "change" this.updateResponseSetting}} />
+                        <span>{{t
+                            "interactive_heartbeat.session.baseline_bpm"
+                          }}</span>
+                        <input
+                          type="number"
+                          min="40"
+                          max="180"
+                          value={{this.baselineBpm}}
+                          data-setting="baselineBpm"
+                          {{on "change" this.updateResponseSetting}}
+                        />
                       </label>
                       <label class="interactive-heartbeat__field">
-                        <span>{{t "interactive_heartbeat.session.relative_range_bpm"}}</span>
-                        <input type="number" min="10" max="120" value={{this.relativeRangeBpm}} data-setting="relativeRangeBpm" {{on "change" this.updateResponseSetting}} />
+                        <span>{{t
+                            "interactive_heartbeat.session.relative_range_bpm"
+                          }}</span>
+                        <input
+                          type="number"
+                          min="10"
+                          max="120"
+                          value={{this.relativeRangeBpm}}
+                          data-setting="relativeRangeBpm"
+                          {{on "change" this.updateResponseSetting}}
+                        />
                       </label>
                     </div>
                   </fieldset>
@@ -2154,15 +2367,33 @@ export default class InteractiveHeartbeatSessionPage extends Component {
 
                 {{#if this.showTransitionSettings}}
                   <fieldset class="interactive-heartbeat__fieldset">
-                    <legend>{{t "interactive_heartbeat.session.intensity_transition"}}</legend>
+                    <legend>{{t
+                        "interactive_heartbeat.session.intensity_transition"
+                      }}</legend>
                     <div class="interactive-heartbeat__settings-grid">
                       <label class="interactive-heartbeat__range-field">
-                        <span>{{t "interactive_heartbeat.session.ramp_up"}}: {{this.rampUpPerSecond}}/s</span>
-                        <input type="range" min="1" max="20" value={{this.rampUpPerSecond}} data-setting="rampUpPerSecond" {{on "input" this.updateResponseSetting}} />
+                        <span>{{t "interactive_heartbeat.session.ramp_up"}}:
+                          {{this.rampUpPerSecond}}/s</span>
+                        <input
+                          type="range"
+                          min="1"
+                          max="20"
+                          value={{this.rampUpPerSecond}}
+                          data-setting="rampUpPerSecond"
+                          {{on "input" this.updateResponseSetting}}
+                        />
                       </label>
                       <label class="interactive-heartbeat__range-field">
-                        <span>{{t "interactive_heartbeat.session.ramp_down"}}: {{this.rampDownPerSecond}}/s</span>
-                        <input type="range" min="1" max="20" value={{this.rampDownPerSecond}} data-setting="rampDownPerSecond" {{on "input" this.updateResponseSetting}} />
+                        <span>{{t "interactive_heartbeat.session.ramp_down"}}:
+                          {{this.rampDownPerSecond}}/s</span>
+                        <input
+                          type="range"
+                          min="1"
+                          max="20"
+                          value={{this.rampDownPerSecond}}
+                          data-setting="rampDownPerSecond"
+                          {{on "input" this.updateResponseSetting}}
+                        />
                       </label>
                     </div>
                   </fieldset>
@@ -2270,20 +2501,32 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                 {{/if}}
 
                 {{#if this.toys.length}}
-                  <label class="interactive-heartbeat__field">
-                    <span>{{t "interactive_heartbeat.lovense.toy"}}</span>
-                    <select
-                      {{on "change" this.selectToy}}
+                  <fieldset class="interactive-heartbeat__choice-fieldset">
+                    <legend>{{t "interactive_heartbeat.lovense.toy"}}</legend>
+                    <div
+                      class="interactive-heartbeat__choice-grid interactive-heartbeat__choice-grid--compact"
+                      role="radiogroup"
+                      aria-label={{t "interactive_heartbeat.lovense.toy"}}
                     >
                       {{#each this.toyOptions as |toy|}}
-                        <option value={{toy.id}} selected={{toy.selected}}>
-                          {{toy.name}}{{#if toy.battery}}
-                            ·
-                            {{toy.battery}}%{{/if}}
-                        </option>
+                        <label class="interactive-heartbeat__choice">
+                          <input
+                            type="radio"
+                            name="interactive-heartbeat-toy"
+                            value={{toy.id}}
+                            checked={{toy.selected}}
+                            {{on "change" this.selectToy}}
+                          />
+                          <span class="interactive-heartbeat__choice-content">
+                            <strong>{{toy.name}}</strong>
+                            {{#if toy.battery}}
+                              <small>{{toy.battery}}%</small>
+                            {{/if}}
+                          </span>
+                        </label>
                       {{/each}}
-                    </select>
-                  </label>
+                    </div>
+                  </fieldset>
                   <button type="button" class="btn" {{on "click" this.testToy}}>
                     {{t "interactive_heartbeat.lovense.test"}}
                   </button>
@@ -2326,15 +2569,21 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                       <dd>{{this.signalIntervalLabel}} ms</dd>
                     </div>
                     <div>
-                      <dt>{{t "interactive_heartbeat.signal.response_mode"}}</dt>
+                      <dt>{{t
+                          "interactive_heartbeat.signal.response_mode"
+                        }}</dt>
                       <dd>{{this.responseModeLabel}}</dd>
                     </div>
                     <div>
-                      <dt>{{t "interactive_heartbeat.signal.desired_strength"}}</dt>
+                      <dt>{{t
+                          "interactive_heartbeat.signal.desired_strength"
+                        }}</dt>
                       <dd>{{this.desiredStrengthLabel}}/20</dd>
                     </div>
                     <div>
-                      <dt>{{t "interactive_heartbeat.signal.applied_strength"}}</dt>
+                      <dt>{{t
+                          "interactive_heartbeat.signal.applied_strength"
+                        }}</dt>
                       <dd>{{this.appliedStrengthLabel}}/20</dd>
                     </div>
                     <div>
@@ -2346,11 +2595,15 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                       <dd>{{this.controlModeLabel}}</dd>
                     </div>
                     <div>
-                      <dt>{{t "interactive_heartbeat.signal.pattern_cycle"}}</dt>
+                      <dt>{{t
+                          "interactive_heartbeat.signal.pattern_cycle"
+                        }}</dt>
                       <dd>{{this.patternCycleLabel}} ms</dd>
                     </div>
                     <div>
-                      <dt>{{t "interactive_heartbeat.signal.pattern_on_time"}}</dt>
+                      <dt>{{t
+                          "interactive_heartbeat.signal.pattern_on_time"
+                        }}</dt>
                       <dd>{{this.patternOnTimeLabel}} ms</dd>
                     </div>
                     <div>
@@ -2374,15 +2627,22 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                       <dd>{{this.signalEngineState.signals_received}}</dd>
                     </div>
                     <div>
-                      <dt>{{t "interactive_heartbeat.signal.pattern_updates"}}</dt>
+                      <dt>{{t
+                          "interactive_heartbeat.signal.pattern_updates"
+                        }}</dt>
                       <dd>{{this.signalEngineState.pattern_updates}}</dd>
                     </div>
                     <div>
-                      <dt>{{t "interactive_heartbeat.signal.estimated_cycles"}}</dt>
-                      <dd>{{this.signalEngineState.pattern_cycles_estimated}}</dd>
+                      <dt>{{t
+                          "interactive_heartbeat.signal.estimated_cycles"
+                        }}</dt>
+                      <dd
+                      >{{this.signalEngineState.pattern_cycles_estimated}}</dd>
                     </div>
                     <div>
-                      <dt>{{t "interactive_heartbeat.signal.intensity_updates"}}</dt>
+                      <dt>{{t
+                          "interactive_heartbeat.signal.intensity_updates"
+                        }}</dt>
                       <dd>{{this.signalEngineState.intensity_updates}}</dd>
                     </div>
                     <div>
@@ -2390,12 +2650,17 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                       <dd>{{this.signalEngineState.zone_changes_confirmed}}</dd>
                     </div>
                     <div>
-                      <dt>{{t "interactive_heartbeat.signal.fallback_pulses"}}</dt>
+                      <dt>{{t
+                          "interactive_heartbeat.signal.fallback_pulses"
+                        }}</dt>
                       <dd>{{this.signalEngineState.fallback_pulses_sent}}</dd>
                     </div>
                     <div>
-                      <dt>{{t "interactive_heartbeat.signal.browser_delays"}}</dt>
-                      <dd>{{this.signalEngineState.browser_beats_skipped_late}}</dd>
+                      <dt>{{t
+                          "interactive_heartbeat.signal.browser_delays"
+                        }}</dt>
+                      <dd
+                      >{{this.signalEngineState.browser_beats_skipped_late}}</dd>
                     </div>
                     <div>
                       <dt>{{t "interactive_heartbeat.signal.busy_skips"}}</dt>
@@ -2408,14 +2673,20 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                       <dd>{{this.signalEngineState.transport_errors}}</dd>
                     </div>
                     <div>
-                      <dt>{{t "interactive_heartbeat.signal.command_errors"}}</dt>
+                      <dt>{{t
+                          "interactive_heartbeat.signal.command_errors"
+                        }}</dt>
                       <dd>{{this.signalEngineState.command_errors}}</dd>
                     </div>
                     <div>
                       <dt>{{t
                           "interactive_heartbeat.signal.last_lovense_error"
                         }}</dt>
-                      <dd>{{if this.lastLovenseError this.lastLovenseError "—"}}</dd>
+                      <dd>{{if
+                          this.lastLovenseError
+                          this.lastLovenseError
+                          "—"
+                        }}</dd>
                     </div>
                   </dl>
                 </details>
@@ -2431,7 +2702,11 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                     "Not accepted"
                   }}</span>
                 <span>{{if this.current.ready "Ready" "Not ready"}}</span>
-                <span>{{if this.current.configuration_accepted "Mode accepted" "Mode approval needed"}}</span>
+                <span>{{if
+                    this.current.configuration_accepted
+                    "Mode accepted"
+                    "Mode approval needed"
+                  }}</span>
                 <span>{{if this.current.present "Present" "Not present"}}</span>
                 {{#if this.needsHeartbeat}}
                   <span>{{if
@@ -2449,7 +2724,11 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                     "Not accepted"
                   }}</span>
                 <span>{{if this.other.ready "Ready" "Not ready"}}</span>
-                <span>{{if this.other.configuration_accepted "Mode accepted" "Mode approval needed"}}</span>
+                <span>{{if
+                    this.other.configuration_accepted
+                    "Mode accepted"
+                    "Mode approval needed"
+                  }}</span>
                 <span>{{if this.other.present "Present" "Not present"}}</span>
                 {{#if this.other.needs_heartbeat_consent}}
                   <span>{{if
