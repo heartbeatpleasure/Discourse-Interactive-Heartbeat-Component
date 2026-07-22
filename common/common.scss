@@ -35,17 +35,23 @@
 }
 
 .interactive-heartbeat__hero--session {
-  padding: 1.5rem;
+  padding: 1.5rem 1.75rem;
 
   h1 {
-    margin: 0.2rem 0 0.45rem;
-    font-size: clamp(1.9rem, 4vw, 2.9rem);
-    line-height: 1.05;
+    max-width: 100%;
+    margin: 0.35rem 0 0;
+    font-size: clamp(1.65rem, 3.2vw, 2.5rem);
+    line-height: 1.1;
+    overflow-wrap: anywhere;
   }
 
   p {
-    margin-top: 0.1rem;
+    margin-top: 0.55rem;
   }
+}
+
+.interactive-heartbeat__session-heading {
+  min-width: 0;
 }
 
 .interactive-heartbeat__back {
@@ -263,45 +269,6 @@
   p {
     color: var(--primary-medium);
   }
-}
-
-.interactive-heartbeat__member--session {
-  gap: 1rem;
-}
-
-.interactive-heartbeat__member-copy {
-  display: grid;
-  align-content: center;
-  min-width: 0;
-}
-
-.interactive-heartbeat__member-avatars {
-  position: relative;
-  width: 88px;
-  height: 64px;
-  flex: 0 0 88px;
-}
-
-.interactive-heartbeat__member-avatar {
-  position: absolute;
-  top: 50%;
-  width: 54px;
-  height: 54px;
-  border-radius: 50%;
-  border: 3px solid var(--secondary);
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12);
-  transform: translateY(-50%);
-  object-fit: cover;
-}
-
-.interactive-heartbeat__member-avatar--current {
-  left: 0;
-  z-index: 2;
-}
-
-.interactive-heartbeat__member-avatar--other {
-  right: 0;
-  z-index: 1;
 }
 
 .interactive-heartbeat__actions {
@@ -527,11 +494,12 @@
 .interactive-heartbeat__configuration-status {
   display: grid;
   gap: 0.8rem;
-  margin-bottom: 1rem;
-  border: 1px solid var(--tertiary-low);
-  border-radius: 14px;
-  padding: 1rem;
-  background: var(--tertiary-very-low);
+  margin-bottom: 1.25rem;
+  border: 1px solid var(--primary-low);
+  border-left: 4px solid var(--tertiary);
+  border-radius: 12px;
+  padding: 0.9rem 1rem;
+  background: var(--secondary);
 }
 
 .interactive-heartbeat__configuration-status-header {
@@ -586,11 +554,88 @@
 }
 
 .interactive-heartbeat__mode-summary {
-  margin-bottom: 0.5rem;
+  margin: 1.25rem 0 0.5rem;
+  padding-top: 1.15rem;
+  border-top: 1px solid var(--primary-low);
+}
+
+.interactive-heartbeat__mode-summary-header {
+  margin-bottom: 0.8rem;
 
   h3 {
-    margin: 0 0 0.6rem;
+    margin: 0 0 0.25rem;
     font-size: var(--font-up-1);
+  }
+
+  p {
+    margin: 0;
+    color: var(--primary-medium);
+  }
+}
+
+.interactive-heartbeat__mode-flow-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.interactive-heartbeat__mode-flow-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--primary-low);
+  border-radius: 14px;
+  background: var(--secondary);
+
+  dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin: 0;
+  }
+
+  dl > div {
+    min-width: 0;
+    padding: 0.85rem 1rem;
+  }
+
+  dl > div + div {
+    border-left: 1px solid var(--primary-low);
+  }
+
+  dt {
+    margin-bottom: 0.2rem;
+    color: var(--primary-medium);
+    font-size: var(--font-down-1);
+    font-weight: 700;
+  }
+
+  dd {
+    margin: 0;
+    font-weight: 700;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+}
+
+.interactive-heartbeat__mode-flow-target {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--primary-low);
+  background: var(--primary-very-low);
+
+  span {
+    color: var(--primary-medium);
+    font-size: var(--font-down-1);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  strong {
+    overflow-wrap: anywhere;
+    text-align: right;
   }
 }
 
@@ -687,7 +732,8 @@
 
 @media (max-width: 800px) {
   .interactive-heartbeat__choice-grid,
-  .interactive-heartbeat__choice-grid--compact {
+  .interactive-heartbeat__choice-grid--compact,
+  .interactive-heartbeat__mode-flow-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -893,5 +939,25 @@
     .btn {
       width: 100%;
     }
+  }
+}
+
+@media (max-width: 520px) {
+  .interactive-heartbeat__mode-flow-card dl {
+    grid-template-columns: 1fr;
+  }
+
+  .interactive-heartbeat__mode-flow-card dl > div + div {
+    border-top: 1px solid var(--primary-low);
+    border-left: 0;
+  }
+
+  .interactive-heartbeat__mode-flow-target {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .interactive-heartbeat__mode-flow-target strong {
+    text-align: left;
   }
 }

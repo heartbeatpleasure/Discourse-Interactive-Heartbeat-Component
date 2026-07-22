@@ -218,16 +218,17 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     return this.session?.current_user || null;
   }
 
-  get currentAvatarUrl() {
-    return this.current ? avatarUrl(this.current) : null;
-  }
-
   get sessionTitle() {
-    const currentUsername = this.current?.username || "You";
     const otherUsername = this.other?.user?.username;
     return otherUsername
-      ? `${currentUsername} and ${otherUsername}`
-      : currentUsername;
+      ? t("interactive_heartbeat.session.title_with_user", {
+          username: otherUsername,
+        })
+      : t("interactive_heartbeat.session.mode_you");
+  }
+
+  get showHeaderStatus() {
+    return Boolean(this.session?.status && this.session.status !== "setup" && !this.active);
   }
 
   get other() {
@@ -330,7 +331,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     return [
       {
         key: "current",
-        name: this.current?.username || t("interactive_heartbeat.session.mode_you"),
+        name: t("interactive_heartbeat.session.mode_you"),
         accepted: this.current?.configuration_accepted === true,
       },
       {
@@ -528,6 +529,67 @@ export default class InteractiveHeartbeatSessionPage extends Component {
 
   get startButtonDisabled() {
     return !this.canStart;
+  }
+
+  get modeFlowRows() {
+    const initiator = this.session?.initiator?.username || "Initiator";
+    const invitee = this.session?.invitee?.username || "Invitee";
+    const directions = this.session?.directions || [];
+    const selectedLeader = this.leaderOptions.find(
+      (option) => option.id === String(this.leaderUserId),
+    );
+    const leader = selectedLeader?.username || initiator;
+
+    const flowForTarget = (target, partner, key) => {
+      let tempoSource;
+      let intensitySource;
+
+      switch (this.sessionMode) {
+        case "shared_control":
+          tempoSource = `${partner}'s heartbeat`;
+          intensitySource = `${target}'s heartbeat`;
+          break;
+        case "heart_sync":
+          tempoSource = t("interactive_heartbeat.session.flow_both_heartbeats");
+          intensitySource = t("interactive_heartbeat.session.flow_sync_score");
+          break;
+        case "shared_average":
+          tempoSource = t("interactive_heartbeat.session.flow_average_heartbeats");
+          intensitySource = t("interactive_heartbeat.session.flow_average_heartbeats");
+          break;
+        case "highest_heartbeat":
+          tempoSource = t("interactive_heartbeat.session.flow_highest_heartbeat");
+          intensitySource = t("interactive_heartbeat.session.flow_highest_heartbeat");
+          break;
+        case "lowest_heartbeat":
+          tempoSource = t("interactive_heartbeat.session.flow_lowest_heartbeat");
+          intensitySource = t("interactive_heartbeat.session.flow_lowest_heartbeat");
+          break;
+        case "leader_follower":
+          tempoSource = `${leader}'s heartbeat`;
+          intensitySource = `${leader}'s heartbeat`;
+          break;
+        default:
+          tempoSource = `${partner}'s heartbeat`;
+          intensitySource = `${partner}'s heartbeat`;
+      }
+
+      return {
+        key,
+        target: `${target}'s toy`,
+        tempoSource,
+        intensitySource,
+      };
+    };
+
+    const flows = [];
+    if (directions.includes("initiator_to_invitee")) {
+      flows.push(flowForTarget(invitee, initiator, "initiator_to_invitee"));
+    }
+    if (directions.includes("invitee_to_initiator")) {
+      flows.push(flowForTarget(initiator, invitee, "invitee_to_initiator"));
+    }
+    return flows;
   }
 
   get directionRows() {
@@ -2025,29 +2087,14 @@ export default class InteractiveHeartbeatSessionPage extends Component {
         <section
           class="interactive-heartbeat__hero interactive-heartbeat__hero--session"
         >
-          <div class="interactive-heartbeat__member interactive-heartbeat__member--session">
-            <div class="interactive-heartbeat__member-avatars" aria-hidden="true">
-              {{#if this.currentAvatarUrl}}
-                <img
-                  class="interactive-heartbeat__member-avatar interactive-heartbeat__member-avatar--current"
-                  src={{this.currentAvatarUrl}}
-                  alt=""
-                />
-              {{/if}}
-              {{#if this.other.user.avatar_url}}
-                <img
-                  class="interactive-heartbeat__member-avatar interactive-heartbeat__member-avatar--other"
-                  src={{this.other.user.avatar_url}}
-                  alt=""
-                />
-              {{/if}}
-            </div>
-            <div class="interactive-heartbeat__member-copy">
-              <span class="interactive-heartbeat__eyebrow">Private heartbeat
-                session</span>
-              <h1>{{this.sessionTitle}}</h1>
+          <div class="interactive-heartbeat__session-heading">
+            <span class="interactive-heartbeat__eyebrow">{{t
+                "interactive_heartbeat.session.private_session_label"
+              }}</span>
+            <h1>{{this.sessionTitle}}</h1>
+            {{#if this.showHeaderStatus}}
               <p>{{this.statusLabel}}</p>
-            </div>
+            {{/if}}
           </div>
           {{#if this.active}}
             <span class="interactive-heartbeat__live-pill">Active</span>
@@ -2115,6 +2162,21 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                 </div>
               </div>
 
+              <div class="interactive-heartbeat__configuration-status">
+                <div class="interactive-heartbeat__configuration-status-header">
+                  <strong>{{t "interactive_heartbeat.session.mode_approval_title"}}</strong>
+                  <span>{{t "interactive_heartbeat.session.mode_approval_help"}}</span>
+                </div>
+                <div class="interactive-heartbeat__approval-chip-row">
+                  {{#each this.modeApprovalBadges as |badge|}}
+                    <span class={{badge.className}}>
+                      <strong>{{badge.name}}</strong>
+                      <span>{{badge.label}}</span>
+                    </span>
+                  {{/each}}
+                </div>
+              </div>
+
               <div class="interactive-heartbeat__mode-grid">
                 <fieldset
                   class="interactive-heartbeat__choice-fieldset"
@@ -2176,28 +2238,31 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                 {{/if}}
               </div>
 
-              <div class="interactive-heartbeat__configuration-status">
-                <div class="interactive-heartbeat__configuration-status-header">
-                  <strong>{{t "interactive_heartbeat.session.mode_approval_title"}}</strong>
-                  <span>{{t "interactive_heartbeat.session.mode_approval_help"}}</span>
-                </div>
-                <div class="interactive-heartbeat__approval-chip-row">
-                  {{#each this.modeApprovalBadges as |badge|}}
-                    <span class={{badge.className}}>
-                      <strong>{{badge.name}}</strong>
-                      <span>{{badge.label}}</span>
-                    </span>
-                  {{/each}}
-                </div>
-              </div>
-
               <div class="interactive-heartbeat__mode-summary">
-                <h3>{{t "interactive_heartbeat.session.mode_summary_title"}}</h3>
-                <ul class="interactive-heartbeat__direction-list interactive-heartbeat__direction-list--cards">
-                  {{#each this.directionRows as |direction|}}
-                    <li>{{direction}}</li>
+                <div class="interactive-heartbeat__mode-summary-header">
+                  <h3>{{t "interactive_heartbeat.session.mode_summary_title"}}</h3>
+                  <p>{{t "interactive_heartbeat.session.mode_summary_help"}}</p>
+                </div>
+                <div class="interactive-heartbeat__mode-flow-grid">
+                  {{#each this.modeFlowRows as |flow|}}
+                    <article class="interactive-heartbeat__mode-flow-card">
+                      <div class="interactive-heartbeat__mode-flow-target">
+                        <span>{{t "interactive_heartbeat.session.flow_output"}}</span>
+                        <strong>{{flow.target}}</strong>
+                      </div>
+                      <dl>
+                        <div>
+                          <dt>{{t "interactive_heartbeat.session.flow_tempo"}}</dt>
+                          <dd>{{flow.tempoSource}}</dd>
+                        </div>
+                        <div>
+                          <dt>{{t "interactive_heartbeat.session.flow_intensity"}}</dt>
+                          <dd>{{flow.intensitySource}}</dd>
+                        </div>
+                      </dl>
+                    </article>
                   {{/each}}
-                </ul>
+                </div>
               </div>
 
               <div class="interactive-heartbeat__actions">
