@@ -127,7 +127,7 @@ en:
       end: "End session"
       ended: "This session has ended."
       waiting: "Waiting for both participants to accept the mode, provide consent and become ready."
-      exact_bpm_private: "Exact BPM values are not displayed by default. Only the control result required for the selected mode is sent to the toy owner's browser."
+      exact_bpm_private: "Review what you allow for this session and configure how your own toy responds. You can change your personal settings or stop toy control at any time."
       safety: "Your browser controls only your own toy. Closing the page, losing required heartbeat data, pausing, changing the mode, or revoking consent stops local toy control."
     modes:
       cross_heartbeat:
