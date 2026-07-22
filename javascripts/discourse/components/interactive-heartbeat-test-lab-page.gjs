@@ -1040,8 +1040,8 @@ export default class InteractiveHeartbeatTestLabPage extends Component {
                 {{/each}}
               </div>
               {{#if this.sourceAIsSimulated}}
-                <label class="interactive-heartbeat__range-field">
-                  <span>A: {{this.sourceABpm}} BPM</span>
+                <label class="interactive-heartbeat__range-field interactive-heartbeat__test-source-slider">
+                  <span>{{t "interactive_heartbeat.test_lab.simulated_bpm"}}: {{this.sourceABpm}} BPM</span>
                   <input type="range" min="30" max="220" value={{this.sourceABpm}} data-setting="sourceABpm" {{on "input" this.updateNumber}} />
                 </label>
               {{/if}}
@@ -1049,8 +1049,8 @@ export default class InteractiveHeartbeatTestLabPage extends Component {
 
             <div>
               <h3>Source B</h3>
-              <label class="interactive-heartbeat__range-field">
-                <span>Base: {{this.sourceBBpm}} BPM</span>
+              <label class="interactive-heartbeat__range-field interactive-heartbeat__test-source-slider">
+                <span>{{t "interactive_heartbeat.test_lab.base_bpm"}}: {{this.sourceBBpm}} BPM</span>
                 <input type="range" min="30" max="180" value={{this.sourceBBpm}} data-setting="sourceBBpm" {{on "input" this.updateNumber}} />
               </label>
               <div class="interactive-heartbeat__choice-grid interactive-heartbeat__choice-grid--compact">

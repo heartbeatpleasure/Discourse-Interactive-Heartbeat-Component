@@ -174,7 +174,7 @@ en:
       zones:
         label: "Heartbeat zones"
       smooth:
-        label: "Smooth BPM mapping"
+        label: "Smooth BPM"
       relative:
         label: "Relative to baseline"
       sync:
@@ -241,6 +241,8 @@ en:
       sources_help: "Source A can use your real live reading or a simulation. Source B is simulated so two-person modes can be tested with one account."
       real_heartbeat: "My live heartbeat"
       simulated: "Simulated heartbeat"
+      simulated_bpm: "Simulated BPM"
+      base_bpm: "Base BPM"
       unavailable: "Unavailable"
       mode_title: "Mode under test"
       response_title: "Toy response under test"
