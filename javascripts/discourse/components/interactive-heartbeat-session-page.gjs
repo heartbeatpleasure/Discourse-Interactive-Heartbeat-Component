@@ -583,7 +583,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
 
       return {
         key,
-        target: `${target}'s toy`,
+        target,
         tempoSource,
         intensitySource,
       };
@@ -2254,7 +2254,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                   {{#each this.modeFlowRows as |flow|}}
                     <article class="interactive-heartbeat__mode-flow-card">
                       <div class="interactive-heartbeat__mode-flow-target">
-                        <span>{{t "interactive_heartbeat.session.flow_output"}}</span>
+                        <span>{{t "interactive_heartbeat.session.flow_output"}}:</span>
                         <strong>{{flow.target}}</strong>
                       </div>
                       <dl>
