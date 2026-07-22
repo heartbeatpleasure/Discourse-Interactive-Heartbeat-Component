@@ -1031,7 +1031,7 @@ export default class InteractiveHeartbeatTestLabPage extends Component {
           <div class="interactive-heartbeat__test-grid">
             <div>
               <h3>Source A</h3>
-              <div class="interactive-heartbeat__choice-grid interactive-heartbeat__choice-grid--compact">
+              <div class="interactive-heartbeat__choice-grid interactive-heartbeat__choice-grid--compact interactive-heartbeat__choice-grid--stacked">
                 {{#each this.sourceAKindOptions as |option|}}
                   <label class="interactive-heartbeat__choice">
                     <input type="radio" name="test-source-a" value={{option.value}} checked={{option.selected}} {{on "change" this.updateSourceAKind}} />
@@ -1089,7 +1089,7 @@ export default class InteractiveHeartbeatTestLabPage extends Component {
           {{/if}}
         </section>
 
-        <section class="interactive-heartbeat__card">
+        <section class="interactive-heartbeat__card interactive-heartbeat__test-response-card">
           <div class="interactive-heartbeat__card-header"><div><h2>{{t "interactive_heartbeat.test_lab.response_title"}}</h2></div></div>
           <div class="interactive-heartbeat__choice-grid interactive-heartbeat__choice-grid--compact">
             {{#each this.responseOptions as |option|}}

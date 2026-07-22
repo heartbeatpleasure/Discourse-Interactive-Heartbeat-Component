@@ -41,6 +41,15 @@ export default class InteractiveHeartbeatPage extends Component {
   @tracked inbound = true;
   @tracked error = null;
   @tracked notice = null;
+  @tracked history = {
+    total: 0,
+    shown: 0,
+    expanded: false,
+    has_more: false,
+    default_limit: 5,
+  };
+  @tracked clearingCompleted = false;
+  @tracked confirmingClearCompleted = false;
 
   searchTimer = null;
   searchSequence = 0;
@@ -70,10 +79,58 @@ export default class InteractiveHeartbeatPage extends Component {
     return !this.canCreate;
   }
 
+  get currentSessions() {
+    return this.sessions.filter((session) => !session.terminal);
+  }
+
+  get completedSessions() {
+    return this.sessions.filter((session) => session.terminal);
+  }
+
+  get hasAnySessions() {
+    return this.currentSessions.length > 0 || this.completedSessions.length > 0;
+  }
+
+  get hasCompletedHistory() {
+    return Number(this.history?.total || 0) > 0;
+  }
+
+  get canShowMoreCompleted() {
+    return this.history?.has_more === true && this.history?.expanded !== true;
+  }
+
+  formatSessionDate(value) {
+    if (!value) {
+      return "";
+    }
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return "";
+    }
+
+    try {
+      return new Intl.DateTimeFormat(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(date);
+    } catch {
+      return date.toLocaleString();
+    }
+  }
+
   decorateSession(session) {
     const other = session?.other_user?.user;
+    const terminal = session?.terminal === true;
+    const activityDate = this.formatSessionDate(session.activity_at);
+    const activityKey = terminal
+      ? "completed_on"
+      : session.status === "invited"
+        ? "invited_on"
+        : "updated_on";
     return {
       ...session,
+      terminal,
       other_user: session.other_user
         ? {
             ...session.other_user,
@@ -84,7 +141,12 @@ export default class InteractiveHeartbeatPage extends Component {
           }
         : null,
       status_label: t(`interactive_heartbeat.status.${session.status}`),
-      href: `/interactive-heartbeat/sessions/${session.token}`,
+      activity_label: activityDate
+        ? t(`interactive_heartbeat.overview.${activityKey}`, {
+            date: activityDate,
+          })
+        : "",
+      href: terminal ? null : `/interactive-heartbeat/sessions/${session.token}`,
     };
   }
 
@@ -93,7 +155,7 @@ export default class InteractiveHeartbeatPage extends Component {
     await this.load();
   }
 
-  async load() {
+  async load({ historyAll = this.history?.expanded === true } = {}) {
     this.loading = true;
     this.error = null;
 
@@ -111,10 +173,14 @@ export default class InteractiveHeartbeatPage extends Component {
     }
 
     try {
-      const sessions = await ajax("/interactive-heartbeat/api/sessions");
+      const sessions = await ajax("/interactive-heartbeat/api/sessions", {
+        data: { history_all: historyAll },
+      });
       this.sessions = (sessions?.sessions || []).map((session) =>
         this.decorateSession(session),
       );
+      this.history = sessions?.history || this.history;
+      this.confirmingClearCompleted = false;
     } catch (error) {
       this.sessions = [];
       this.error = errorMessage(
@@ -218,6 +284,61 @@ export default class InteractiveHeartbeatPage extends Component {
       );
     } finally {
       this.creating = false;
+    }
+  }
+
+  @action
+  async showAllCompleted() {
+    await this.load({ historyAll: true });
+  }
+
+  @action
+  async showRecentCompleted() {
+    await this.load({ historyAll: false });
+  }
+
+  @action
+  askClearCompleted() {
+    this.confirmingClearCompleted = true;
+  }
+
+  @action
+  cancelClearCompleted() {
+    this.confirmingClearCompleted = false;
+  }
+
+  @action
+  async clearCompleted() {
+    if (this.clearingCompleted) {
+      return;
+    }
+
+    this.clearingCompleted = true;
+    this.error = null;
+    try {
+      const response = await ajax(
+        "/interactive-heartbeat/api/sessions/completed",
+        { type: "DELETE" },
+      );
+      this.notice = t("interactive_heartbeat.overview.completed_cleared", {
+        count: Number(response?.cleared || 0),
+      });
+      this.history = {
+        total: 0,
+        shown: 0,
+        expanded: false,
+        has_more: false,
+        default_limit: 5,
+      };
+      await this.load({ historyAll: false });
+    } catch (error) {
+      this.error = errorMessage(
+        error,
+        t("interactive_heartbeat.errors.clear_completed_failed"),
+      );
+    } finally {
+      this.clearingCompleted = false;
+      this.confirmingClearCompleted = false;
     }
   }
 
@@ -376,46 +497,125 @@ export default class InteractiveHeartbeatPage extends Component {
           </section>
         {{/if}}
 
-        <section class="interactive-heartbeat__card">
+        <section class="interactive-heartbeat__card interactive-heartbeat__sessions-card">
           <div class="interactive-heartbeat__card-header">
             <div>
               <h2>{{t "interactive_heartbeat.overview.sessions"}}</h2>
-              <p>Invitation links are private. Only the two selected members can
-                open a session.</p>
+              <p>{{t "interactive_heartbeat.overview.sessions_help"}}</p>
             </div>
           </div>
 
-          {{#if this.sessions.length}}
-            <div class="interactive-heartbeat__session-list">
-              {{#each this.sessions as |session|}}
-                <article class="interactive-heartbeat__session-row">
-                  <div class="interactive-heartbeat__member">
-                    <img src={{session.other_user.user.avatar_url}} alt="" />
-                    <div>
-                      <strong>{{session.other_user.user.username}}</strong>
-                      <span>{{session.status_label}}</span>
+          {{#if this.currentSessions.length}}
+            <section class="interactive-heartbeat__session-group">
+              <h3>{{t "interactive_heartbeat.overview.current_sessions"}}</h3>
+              <div class="interactive-heartbeat__session-list">
+                {{#each this.currentSessions as |session|}}
+                  <article class="interactive-heartbeat__session-row">
+                    <div class="interactive-heartbeat__member">
+                      <img src={{session.other_user.user.avatar_url}} alt="" />
+                      <div>
+                        <strong>{{session.other_user.user.username}}</strong>
+                        <span>{{session.status_label}}</span>
+                        {{#if session.activity_label}}
+                          <small>{{session.activity_label}}</small>
+                        {{/if}}
+                      </div>
                     </div>
+                    <div class="interactive-heartbeat__actions interactive-heartbeat__session-actions">
+                      {{#if session.can_copy_invite}}
+                        <button
+                          type="button"
+                          class="btn"
+                          {{on "click" (fn this.copyInvite session)}}
+                        >
+                          {{t "interactive_heartbeat.overview.copy"}}
+                        </button>
+                      {{/if}}
+                      {{#if session.can_open}}
+                        <a class="btn btn-primary" href={{session.href}}>
+                          {{t "interactive_heartbeat.overview.open"}}
+                        </a>
+                      {{/if}}
+                    </div>
+                  </article>
+                {{/each}}
+              </div>
+            </section>
+          {{/if}}
+
+          {{#if this.hasCompletedHistory}}
+            <section class="interactive-heartbeat__session-group interactive-heartbeat__session-group--completed">
+              <div class="interactive-heartbeat__session-group-header">
+                <div>
+                  <h3>{{t "interactive_heartbeat.overview.completed_sessions"}}</h3>
+                  <p>{{t "interactive_heartbeat.overview.completed_sessions_help"}}</p>
+                </div>
+                <div class="interactive-heartbeat__actions interactive-heartbeat__history-actions">
+                  {{#if this.canShowMoreCompleted}}
+                    <button type="button" class="btn" {{on "click" this.showAllCompleted}}>
+                      {{t "interactive_heartbeat.overview.show_all_completed" count=this.history.total}}
+                    </button>
+                  {{else if this.history.expanded}}
+                    <button type="button" class="btn" {{on "click" this.showRecentCompleted}}>
+                      {{t "interactive_heartbeat.overview.show_recent_completed"}}
+                    </button>
+                  {{/if}}
+                  <button type="button" class="btn btn-danger" {{on "click" this.askClearCompleted}}>
+                    {{t "interactive_heartbeat.overview.clear_completed"}}
+                  </button>
+                </div>
+              </div>
+
+              {{#if this.confirmingClearCompleted}}
+                <div class="interactive-heartbeat__clear-confirmation" role="alert">
+                  <div>
+                    <strong>{{t "interactive_heartbeat.overview.clear_completed_confirm_title"}}</strong>
+                    <p>{{t "interactive_heartbeat.overview.clear_completed_confirm_help"}}</p>
                   </div>
                   <div class="interactive-heartbeat__actions">
+                    <button type="button" class="btn" {{on "click" this.cancelClearCompleted}}>
+                      {{t "interactive_heartbeat.overview.cancel"}}
+                    </button>
                     <button
                       type="button"
-                      class="btn"
-                      {{on "click" (fn this.copyInvite session)}}
+                      class="btn btn-danger"
+                      disabled={{this.clearingCompleted}}
+                      {{on "click" this.clearCompleted}}
                     >
-                      {{t "interactive_heartbeat.overview.copy"}}
+                      {{#if this.clearingCompleted}}
+                        {{t "interactive_heartbeat.overview.clearing_completed"}}
+                      {{else}}
+                        {{t "interactive_heartbeat.overview.confirm_clear_completed"}}
+                      {{/if}}
                     </button>
-                    <a class="btn btn-primary" href={{session.href}}>
-                      {{t "interactive_heartbeat.overview.open"}}
-                    </a>
                   </div>
-                </article>
-              {{/each}}
-            </div>
-          {{else}}
+                </div>
+              {{/if}}
+
+              <div class="interactive-heartbeat__session-list">
+                {{#each this.completedSessions as |session|}}
+                  <article class="interactive-heartbeat__session-row interactive-heartbeat__session-row--completed">
+                    <div class="interactive-heartbeat__member">
+                      <img src={{session.other_user.user.avatar_url}} alt="" />
+                      <div>
+                        <strong>{{session.other_user.user.username}}</strong>
+                        <span>{{session.status_label}}</span>
+                        {{#if session.activity_label}}
+                          <small>{{session.activity_label}}</small>
+                        {{/if}}
+                      </div>
+                    </div>
+                  </article>
+                {{/each}}
+              </div>
+            </section>
+          {{/if}}
+
+          {{#unless this.hasAnySessions}}
             <p class="interactive-heartbeat__muted">{{t
                 "interactive_heartbeat.overview.no_sessions"
               }}</p>
-          {{/if}}
+          {{/unless}}
         </section>
       {{/if}}
     </div>

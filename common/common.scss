@@ -995,3 +995,108 @@
     flex-wrap: wrap;
   }
 }
+
+// Iteration 8: session history and Test Lab layout refinements.
+.interactive-heartbeat__session-group + .interactive-heartbeat__session-group {
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--primary-low);
+}
+
+.interactive-heartbeat__session-group > h3,
+.interactive-heartbeat__session-group-header h3 {
+  margin: 0 0 0.75rem;
+}
+
+.interactive-heartbeat__session-group-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+
+  p {
+    max-width: 720px;
+    margin: 0;
+    color: var(--primary-medium);
+  }
+}
+
+.interactive-heartbeat__session-row--completed {
+  background: var(--secondary);
+  box-shadow: none;
+
+  .interactive-heartbeat__member {
+    opacity: 0.82;
+  }
+}
+
+.interactive-heartbeat__member small {
+  margin-top: 0.1rem;
+  color: var(--primary-medium);
+  font-size: var(--font-down-1);
+}
+
+.interactive-heartbeat__session-actions,
+.interactive-heartbeat__history-actions {
+  flex: 0 0 auto;
+  margin-top: 0;
+}
+
+.interactive-heartbeat__history-actions {
+  justify-content: flex-end;
+}
+
+.interactive-heartbeat__clear-confirmation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--danger);
+  border-radius: 12px;
+  background: var(--danger-low);
+
+  p {
+    max-width: 760px;
+    margin: 0.25rem 0 0;
+  }
+
+  .interactive-heartbeat__actions {
+    flex: 0 0 auto;
+    margin-top: 0;
+  }
+}
+
+.interactive-heartbeat__choice-grid--stacked {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.interactive-heartbeat__test-response-card {
+  > .interactive-heartbeat__settings-grid {
+    margin-top: 1.35rem;
+  }
+
+  > .interactive-heartbeat__range-field {
+    margin-top: 0.85rem;
+  }
+}
+
+@media (max-width: 800px) {
+  .interactive-heartbeat__session-group-header,
+  .interactive-heartbeat__clear-confirmation {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .interactive-heartbeat__history-actions,
+  .interactive-heartbeat__clear-confirmation .interactive-heartbeat__actions {
+    width: 100%;
+    justify-content: stretch;
+
+    .btn {
+      flex: 1 1 auto;
+    }
+  }
+}

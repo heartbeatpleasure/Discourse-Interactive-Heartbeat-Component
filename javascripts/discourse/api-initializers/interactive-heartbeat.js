@@ -17,7 +17,48 @@ export default apiInitializer("1.0", (api) => {
   const themeSettings = typeof settings === "undefined" ? {} : settings;
   const themeEnabled = enabled(themeSettings.show_nav_item, true);
 
-  if (!pluginEnabled || !navEnabled || !themeEnabled) {
+  if (!pluginEnabled) {
+    return;
+  }
+
+  api.registerNotificationTypeRenderer(
+    "interactive_heartbeat",
+    (NotificationTypeBase) =>
+      class extends NotificationTypeBase {
+        get linkHref() {
+          return this.notification?.data?.url || "/interactive-heartbeat";
+        }
+
+        get linkTitle() {
+          return i18n(
+            themePrefix("interactive_heartbeat.notifications.title"),
+          );
+        }
+
+        get icon() {
+          return "heart";
+        }
+
+        get label() {
+          return (
+            this.notification?.data?.display_username ||
+            i18n(themePrefix("interactive_heartbeat.notifications.fallback_actor"))
+          );
+        }
+
+        get description() {
+          const event = this.notification?.data?.event || "invitation";
+          const key = `interactive_heartbeat.notifications.${event}`;
+          const modeKey = this.notification?.data?.mode;
+          const mode = modeKey
+            ? i18n(themePrefix(`interactive_heartbeat.modes.${modeKey}.label`))
+            : "";
+          return i18n(themePrefix(key), { mode });
+        }
+      },
+  );
+
+  if (!navEnabled || !themeEnabled) {
     return;
   }
 
