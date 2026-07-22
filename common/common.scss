@@ -39,9 +39,9 @@
 
   h1 {
     max-width: 100%;
-    margin: 0.35rem 0 0;
-    font-size: clamp(1.65rem, 3.2vw, 2.5rem);
-    line-height: 1.1;
+    margin: 0.3rem 0 0;
+    font-size: clamp(1.45rem, 2.5vw, 2.1rem);
+    line-height: 1.12;
     overflow-wrap: anywhere;
   }
 
@@ -493,13 +493,12 @@
 
 .interactive-heartbeat__configuration-status {
   display: grid;
-  gap: 0.8rem;
+  gap: 0.75rem;
   margin-bottom: 1.25rem;
   border: 1px solid var(--primary-low);
-  border-left: 4px solid var(--tertiary);
-  border-radius: 12px;
-  padding: 0.9rem 1rem;
-  background: var(--secondary);
+  border-radius: 14px;
+  padding: 1rem 1.05rem;
+  background: var(--primary-very-low);
 }
 
 .interactive-heartbeat__configuration-status-header {
@@ -519,26 +518,32 @@
 .interactive-heartbeat__approval-chip-row {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 0.65rem;
 }
 
 .interactive-heartbeat__approval-chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  min-height: 2.4rem;
-  padding: 0.45rem 0.8rem;
+  gap: 0.55rem;
+  min-height: 0;
+  padding: 0.4rem 0.9rem;
   border: 1px solid var(--primary-low-mid);
   border-radius: 999px;
   background: var(--secondary);
+  line-height: 1.1;
 
   strong {
-    font-size: var(--font-up-1);
+    display: inline-flex;
+    align-items: center;
+    font-size: 1.05rem;
   }
 
   span {
+    display: inline-flex;
+    align-items: center;
     color: var(--primary-medium);
-    font-size: var(--font-down-1);
+    font-size: 0.98rem;
     font-weight: 700;
   }
 }
@@ -576,14 +581,18 @@
 .interactive-heartbeat__mode-flow-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.75rem;
+  gap: 0.9rem;
+}
+
+.interactive-heartbeat__mode-flow-grid--single {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .interactive-heartbeat__mode-flow-card {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--primary-low);
-  border-radius: 14px;
+  border-radius: 16px;
   background: var(--secondary);
 
   dl {
@@ -602,40 +611,40 @@
   }
 
   dt {
-    margin-bottom: 0.2rem;
+    margin-bottom: 0.28rem;
     color: var(--primary-medium);
-    font-size: var(--font-down-1);
+    font-size: 0.95rem;
     font-weight: 700;
   }
 
   dd {
     margin: 0;
+    font-size: 1.15rem;
     font-weight: 700;
-    line-height: 1.35;
+    line-height: 1.3;
     overflow-wrap: anywhere;
   }
 }
 
 .interactive-heartbeat__mode-flow-target {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.75rem 1rem;
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.95rem 1rem 0.9rem;
   border-bottom: 1px solid var(--primary-low);
   background: var(--primary-very-low);
 
   span {
     color: var(--primary-medium);
-    font-size: var(--font-down-1);
-    font-weight: 700;
+    font-size: 0.82rem;
+    font-weight: 800;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.05em;
   }
 
   strong {
+    font-size: 1.15rem;
+    line-height: 1.2;
     overflow-wrap: anywhere;
-    text-align: right;
   }
 }
 
@@ -677,8 +686,8 @@
 
 .interactive-heartbeat__choice-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.6rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
 }
 
 .interactive-heartbeat__choice-grid--compact {
@@ -688,12 +697,12 @@
 .interactive-heartbeat__choice {
   display: flex;
   align-items: flex-start;
-  gap: 0.65rem;
+  gap: 0.75rem;
   min-width: 0;
   margin: 0;
-  padding: 0.75rem;
+  padding: 1rem;
   border: 1px solid var(--primary-low-mid);
-  border-radius: 10px;
+  border-radius: 14px;
   background: var(--secondary);
   cursor: pointer;
 
@@ -710,31 +719,54 @@
 
   input {
     flex: 0 0 auto;
-    margin-top: 0.2rem;
+    margin-top: 0.22rem;
   }
 }
 
 .interactive-heartbeat__choice-content {
   display: grid;
   min-width: 0;
-  gap: 0.15rem;
+  gap: 0.22rem;
 
   strong,
   small {
     overflow-wrap: anywhere;
   }
 
+  strong {
+    font-size: 1.05rem;
+    line-height: 1.2;
+  }
+
   small {
     color: var(--primary-medium);
+    font-size: 0.98rem;
+    line-height: 1.28;
     font-weight: 400;
+  }
+}
+
+@media (max-width: 1100px) {
+  .interactive-heartbeat__choice-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 800px) {
   .interactive-heartbeat__choice-grid,
   .interactive-heartbeat__choice-grid--compact,
-  .interactive-heartbeat__mode-flow-grid {
+  .interactive-heartbeat__mode-flow-grid,
+  .interactive-heartbeat__mode-flow-grid--single {
     grid-template-columns: 1fr;
+  }
+
+  .interactive-heartbeat__mode-flow-card dl {
+    grid-template-columns: 1fr;
+  }
+
+  .interactive-heartbeat__mode-flow-card dl > div + div {
+    border-left: 0;
+    border-top: 1px solid var(--primary-low);
   }
 }
 

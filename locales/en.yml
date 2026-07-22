@@ -79,7 +79,7 @@ en:
       mode_approval_help: "Both participants must approve a shared mode before it can control a toy."
       mode_summary_title: "How this mode controls each toy"
       mode_summary_help: "Each enabled toy has its own tempo and intensity inputs."
-      flow_output: "Toy"
+      flow_output: "Target toy"
       flow_tempo: "Pulse tempo"
       flow_intensity: "Vibration intensity"
       flow_both_heartbeats: "Both heartbeats"

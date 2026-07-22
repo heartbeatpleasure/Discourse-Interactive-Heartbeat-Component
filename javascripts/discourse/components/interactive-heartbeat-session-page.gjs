@@ -350,6 +350,13 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     }));
   }
 
+  get modeFlowGridClass() {
+    const count = this.modeFlowRows.length;
+    return count <= 1
+      ? "interactive-heartbeat__mode-flow-grid interactive-heartbeat__mode-flow-grid--single"
+      : "interactive-heartbeat__mode-flow-grid";
+  }
+
   get permissionSummaryRows() {
     const rows = [
       t("interactive_heartbeat.session.permission_heartbeat"),
@@ -2243,7 +2250,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                   <h3>{{t "interactive_heartbeat.session.mode_summary_title"}}</h3>
                   <p>{{t "interactive_heartbeat.session.mode_summary_help"}}</p>
                 </div>
-                <div class="interactive-heartbeat__mode-flow-grid">
+                <div class={{this.modeFlowGridClass}}>
                   {{#each this.modeFlowRows as |flow|}}
                     <article class="interactive-heartbeat__mode-flow-card">
                       <div class="interactive-heartbeat__mode-flow-target">
