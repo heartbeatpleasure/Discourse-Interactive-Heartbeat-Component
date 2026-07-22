@@ -218,6 +218,18 @@ export default class InteractiveHeartbeatSessionPage extends Component {
     return this.session?.current_user || null;
   }
 
+  get currentAvatarUrl() {
+    return this.current ? avatarUrl(this.current) : null;
+  }
+
+  get sessionTitle() {
+    const currentUsername = this.current?.username || "You";
+    const otherUsername = this.other?.user?.username;
+    return otherUsername
+      ? `${currentUsername} and ${otherUsername}`
+      : currentUsername;
+  }
+
   get other() {
     const participant = this.session?.other_user;
     if (!participant?.user) {
@@ -311,6 +323,29 @@ export default class InteractiveHeartbeatSessionPage extends Component {
         : this.sessionStep === step.key
           ? "interactive-heartbeat__step interactive-heartbeat__step--current"
           : "interactive-heartbeat__step",
+    }));
+  }
+
+  get modeApprovalBadges() {
+    return [
+      {
+        key: "current",
+        name: this.current?.username || t("interactive_heartbeat.session.mode_you"),
+        accepted: this.current?.configuration_accepted === true,
+      },
+      {
+        key: "other",
+        name: this.other?.user?.username || "Partner",
+        accepted: this.other?.configuration_accepted === true,
+      },
+    ].map((badge) => ({
+      ...badge,
+      label: badge.accepted
+        ? t("interactive_heartbeat.session.accepted")
+        : t("interactive_heartbeat.session.awaiting_acceptance"),
+      className: badge.accepted
+        ? "interactive-heartbeat__approval-chip interactive-heartbeat__approval-chip--accepted"
+        : "interactive-heartbeat__approval-chip interactive-heartbeat__approval-chip--pending",
     }));
   }
 
@@ -1990,14 +2025,27 @@ export default class InteractiveHeartbeatSessionPage extends Component {
         <section
           class="interactive-heartbeat__hero interactive-heartbeat__hero--session"
         >
-          <div class="interactive-heartbeat__member">
-            {{#if this.other.user.avatar_url}}
-              <img src={{this.other.user.avatar_url}} alt="" />
-            {{/if}}
-            <div>
+          <div class="interactive-heartbeat__member interactive-heartbeat__member--session">
+            <div class="interactive-heartbeat__member-avatars" aria-hidden="true">
+              {{#if this.currentAvatarUrl}}
+                <img
+                  class="interactive-heartbeat__member-avatar interactive-heartbeat__member-avatar--current"
+                  src={{this.currentAvatarUrl}}
+                  alt=""
+                />
+              {{/if}}
+              {{#if this.other.user.avatar_url}}
+                <img
+                  class="interactive-heartbeat__member-avatar interactive-heartbeat__member-avatar--other"
+                  src={{this.other.user.avatar_url}}
+                  alt=""
+                />
+              {{/if}}
+            </div>
+            <div class="interactive-heartbeat__member-copy">
               <span class="interactive-heartbeat__eyebrow">Private heartbeat
                 session</span>
-              <h1>You and {{this.other.user.username}}</h1>
+              <h1>{{this.sessionTitle}}</h1>
               <p>{{this.statusLabel}}</p>
             </div>
           </div>
@@ -2128,29 +2176,28 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                 {{/if}}
               </div>
 
-              <ul class="interactive-heartbeat__direction-list">
-                {{#each this.directionRows as |direction|}}
-                  <li>{{direction}}</li>
-                {{/each}}
-              </ul>
-
               <div class="interactive-heartbeat__configuration-status">
-                <span>
-                  {{t "interactive_heartbeat.session.mode_you"}}:
-                  {{if
-                    this.current.configuration_accepted
-                    (t "interactive_heartbeat.session.accepted")
-                    (t "interactive_heartbeat.session.awaiting_acceptance")
-                  }}
-                </span>
-                <span>
-                  {{this.other.user.username}}:
-                  {{if
-                    this.other.configuration_accepted
-                    (t "interactive_heartbeat.session.accepted")
-                    (t "interactive_heartbeat.session.awaiting_acceptance")
-                  }}
-                </span>
+                <div class="interactive-heartbeat__configuration-status-header">
+                  <strong>{{t "interactive_heartbeat.session.mode_approval_title"}}</strong>
+                  <span>{{t "interactive_heartbeat.session.mode_approval_help"}}</span>
+                </div>
+                <div class="interactive-heartbeat__approval-chip-row">
+                  {{#each this.modeApprovalBadges as |badge|}}
+                    <span class={{badge.className}}>
+                      <strong>{{badge.name}}</strong>
+                      <span>{{badge.label}}</span>
+                    </span>
+                  {{/each}}
+                </div>
+              </div>
+
+              <div class="interactive-heartbeat__mode-summary">
+                <h3>{{t "interactive_heartbeat.session.mode_summary_title"}}</h3>
+                <ul class="interactive-heartbeat__direction-list interactive-heartbeat__direction-list--cards">
+                  {{#each this.directionRows as |direction|}}
+                    <li>{{direction}}</li>
+                  {{/each}}
+                </ul>
               </div>
 
               <div class="interactive-heartbeat__actions">
@@ -2171,7 +2218,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
             </section>
           {{/if}}
 
-          <div class="interactive-heartbeat__grid">
+          <div class="interactive-heartbeat__grid interactive-heartbeat__grid--session">
             <section class="interactive-heartbeat__card">
               <div class="interactive-heartbeat__card-header">
                 <div>
@@ -2184,7 +2231,7 @@ export default class InteractiveHeartbeatSessionPage extends Component {
                 <div>
                   <h3>{{t "interactive_heartbeat.session.permissions_title"}}</h3>
                   <p>{{t "interactive_heartbeat.session.permissions_scope_help"}}</p>
-                  <ul class="interactive-heartbeat__direction-list">
+                  <ul class="interactive-heartbeat__direction-list interactive-heartbeat__direction-list--cards interactive-heartbeat__direction-list--summary">
                     {{#each this.permissionSummaryRows as |row|}}
                       <li>{{row}}</li>
                     {{/each}}
