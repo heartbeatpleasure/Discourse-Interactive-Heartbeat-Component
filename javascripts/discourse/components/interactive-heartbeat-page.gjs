@@ -123,6 +123,10 @@ export default class InteractiveHeartbeatPage extends Component {
     return this.invitationPreferences?.mode === "approved_members";
   }
 
+  get allMembersMode() {
+    return this.invitationPreferences?.mode === "all_members";
+  }
+
   get canAddApprovedMember() {
     return Boolean(this.approvedSelectedUser) && !this.approvedSaving;
   }
@@ -157,6 +161,10 @@ export default class InteractiveHeartbeatPage extends Component {
 
   get canShowMoreCompleted() {
     return this.history?.has_more === true && this.history?.expanded !== true;
+  }
+
+  get completedHistoryTruncated() {
+    return this.history?.truncated === true;
   }
 
   formatSessionDate(value) {
@@ -856,9 +864,15 @@ export default class InteractiveHeartbeatPage extends Component {
                 {{else}}
                   <p class="interactive-heartbeat__muted">{{t "interactive_heartbeat.invitation_preferences.no_approved"}}</p>
                 {{/if}}
+                {{#if this.blockedMembers.length}}
+                  <p class="interactive-heartbeat__muted interactive-heartbeat__preference-retained-note">
+                    {{t "interactive_heartbeat.invitation_preferences.blocked_list_retained"}}
+                  </p>
+                {{/if}}
               </section>
             {{/if}}
 
+            {{#if this.allMembersMode}}
             <section class="interactive-heartbeat__preference-list-section">
               <div class="interactive-heartbeat__preference-list-header">
                 <div>
@@ -917,6 +931,7 @@ export default class InteractiveHeartbeatPage extends Component {
                 <p class="interactive-heartbeat__muted">{{t "interactive_heartbeat.invitation_preferences.no_blocked"}}</p>
               {{/if}}
             </section>
+            {{/if}}
           {{/if}}
         </section>
 
@@ -991,7 +1006,7 @@ export default class InteractiveHeartbeatPage extends Component {
                 <div class="interactive-heartbeat__actions interactive-heartbeat__history-actions">
                   {{#if this.canShowMoreCompleted}}
                     <button type="button" class="btn" {{on "click" this.showAllCompleted}}>
-                      {{t "interactive_heartbeat.overview.show_all_completed" count=this.history.total}}
+                      {{t "interactive_heartbeat.overview.show_completed_history" count=this.history.total}}
                     </button>
                   {{else if this.history.expanded}}
                     <button type="button" class="btn" {{on "click" this.showRecentCompleted}}>
@@ -1028,6 +1043,16 @@ export default class InteractiveHeartbeatPage extends Component {
                     </button>
                   </div>
                 </div>
+              {{/if}}
+
+              {{#if this.completedHistoryTruncated}}
+                <p class="interactive-heartbeat__muted">
+                  {{t
+                    "interactive_heartbeat.overview.completed_history_truncated"
+                    shown=this.history.shown
+                    total=this.history.total
+                  }}
+                </p>
               {{/if}}
 
               <div class="interactive-heartbeat__session-list">

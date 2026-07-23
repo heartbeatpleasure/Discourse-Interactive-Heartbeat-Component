@@ -26,7 +26,10 @@ export default apiInitializer("1.0", (api) => {
     (NotificationTypeBase) =>
       class extends NotificationTypeBase {
         get linkHref() {
-          return this.notification?.data?.url || "/interactive-heartbeat";
+          const url = String(this.notification?.data?.url || "");
+          return /^\/interactive-heartbeat(?:\/|$)/.test(url)
+            ? url
+            : "/interactive-heartbeat";
         }
 
         get linkTitle() {

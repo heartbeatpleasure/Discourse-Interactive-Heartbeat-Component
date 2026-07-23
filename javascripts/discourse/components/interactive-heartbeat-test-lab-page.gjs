@@ -31,16 +31,26 @@ function randomId() {
   );
 }
 
+const LOVENSE_SDK_URL = "https://api.lovense-api.com/basic-sdk/core.min.js";
+
 function loadExternalScript(src) {
+  if (String(src) !== LOVENSE_SDK_URL) {
+    return Promise.reject(new Error("Unexpected Lovense SDK URL."));
+  }
+
   if (window.LovenseBasicSdk) {
     return Promise.resolve();
   }
 
   return new Promise((resolve, reject) => {
     const existing = document.querySelector(
-      `script[data-interactive-heartbeat-sdk="${src}"]`,
+      'script[data-interactive-heartbeat-sdk="true"]',
     );
     if (existing) {
+      if (existing.src !== LOVENSE_SDK_URL) {
+        reject(new Error("Unexpected Lovense SDK script source."));
+        return;
+      }
       if (existing.dataset.loaded === "true") {
         resolve();
         return;
@@ -55,9 +65,10 @@ function loadExternalScript(src) {
     }
 
     const script = document.createElement("script");
-    script.src = src;
+    script.src = LOVENSE_SDK_URL;
     script.async = true;
-    script.dataset.interactiveHeartbeatSdk = src;
+    script.referrerPolicy = "no-referrer";
+    script.dataset.interactiveHeartbeatSdk = "true";
     script.addEventListener(
       "load",
       () => {
@@ -901,8 +912,8 @@ export default class InteractiveHeartbeatTestLabPage extends Component {
       }
       return this.controllerLockHeld;
     } catch {
-      this.controllerLockHeld = true;
-      return true;
+      this.controllerLockHeld = false;
+      return false;
     }
   }
 
@@ -931,7 +942,8 @@ export default class InteractiveHeartbeatTestLabPage extends Component {
       );
       return true;
     } catch {
-      return true;
+      this.controllerLockHeld = false;
+      return false;
     }
   }
 

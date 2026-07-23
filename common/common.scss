@@ -1152,8 +1152,15 @@
   }
 
   .btn {
-    min-height: 2.75rem;
+    align-self: end;
+    min-height: 3rem;
+    height: 3rem;
+    margin-bottom: 0;
   }
+}
+
+.interactive-heartbeat__preference-retained-note {
+  margin: 1rem 0 0;
 }
 
 .interactive-heartbeat__preference-member-list {
