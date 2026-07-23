@@ -50,15 +50,35 @@ export default class InteractiveHeartbeatPage extends Component {
   };
   @tracked clearingCompleted = false;
   @tracked confirmingClearCompleted = false;
+  @tracked invitationPreferences = null;
+  @tracked invitationPreferencesLoading = true;
+  @tracked invitationPreferencesError = null;
+  @tracked savingInvitationMode = false;
+  @tracked approvedQuery = "";
+  @tracked approvedSuggestions = [];
+  @tracked approvedSelectedUser = null;
+  @tracked approvedSearching = false;
+  @tracked approvedSaving = false;
+  @tracked blockedQuery = "";
+  @tracked blockedSuggestions = [];
+  @tracked blockedSelectedUser = null;
+  @tracked blockedSearching = false;
+  @tracked blockedSaving = false;
 
   searchTimer = null;
   searchSequence = 0;
+  approvedSearchTimer = null;
+  approvedSearchSequence = 0;
+  blockedSearchTimer = null;
+  blockedSearchSequence = 0;
 
   willDestroy() {
     if (super.willDestroy) {
       super.willDestroy(...arguments);
     }
     window.clearTimeout(this.searchTimer);
+    window.clearTimeout(this.approvedSearchTimer);
+    window.clearTimeout(this.blockedSearchTimer);
   }
 
   get title() {
@@ -77,6 +97,46 @@ export default class InteractiveHeartbeatPage extends Component {
 
   get createButtonDisabled() {
     return !this.canCreate;
+  }
+
+  get invitationModeOptions() {
+    const modes = this.invitationPreferences?.available_modes || [];
+    return modes.map((mode) => ({
+      value: mode,
+      selected: this.invitationPreferences?.mode === mode,
+      label: t(`interactive_heartbeat.invitation_preferences.modes.${mode}.label`),
+      description: t(
+        `interactive_heartbeat.invitation_preferences.modes.${mode}.description`,
+      ),
+    }));
+  }
+
+  get approvedMembers() {
+    return this.invitationPreferences?.approved_members || [];
+  }
+
+  get blockedMembers() {
+    return this.invitationPreferences?.blocked_members || [];
+  }
+
+  get approvedOnlyMode() {
+    return this.invitationPreferences?.mode === "approved_members";
+  }
+
+  get canAddApprovedMember() {
+    return Boolean(this.approvedSelectedUser) && !this.approvedSaving;
+  }
+
+  get canAddBlockedMember() {
+    return Boolean(this.blockedSelectedUser) && !this.blockedSaving;
+  }
+
+  get approvedAddDisabled() {
+    return !this.canAddApprovedMember;
+  }
+
+  get blockedAddDisabled() {
+    return !this.canAddBlockedMember;
   }
 
   get currentSessions() {
@@ -172,6 +232,8 @@ export default class InteractiveHeartbeatPage extends Component {
       return;
     }
 
+    await this.loadInvitationPreferences();
+
     try {
       const sessions = await ajax("/interactive-heartbeat/api/sessions", {
         data: { history_all: historyAll },
@@ -189,6 +251,222 @@ export default class InteractiveHeartbeatPage extends Component {
       );
     } finally {
       this.loading = false;
+    }
+  }
+
+  decoratePreferenceResponse(response) {
+    const decorate = (users) =>
+      (users || []).map((user) => ({
+        ...user,
+        avatar_url: avatarUrl(user, 48),
+      }));
+
+    return {
+      ...response,
+      approved_members: decorate(response?.approved_members),
+      blocked_members: decorate(response?.blocked_members),
+    };
+  }
+
+  async loadInvitationPreferences() {
+    this.invitationPreferencesLoading = true;
+    this.invitationPreferencesError = null;
+    try {
+      const response = await ajax(
+        "/interactive-heartbeat/api/invitation-preferences",
+      );
+      this.invitationPreferences = this.decoratePreferenceResponse(response);
+    } catch (error) {
+      this.invitationPreferences = null;
+      this.invitationPreferencesError = errorMessage(
+        error,
+        t("interactive_heartbeat.errors.invitation_preferences_load_failed"),
+      );
+    } finally {
+      this.invitationPreferencesLoading = false;
+    }
+  }
+
+  @action
+  async updateInvitationMode(mode) {
+    if (this.savingInvitationMode || this.invitationPreferences?.mode === mode) {
+      return;
+    }
+
+    this.savingInvitationMode = true;
+    this.invitationPreferencesError = null;
+    try {
+      const response = await ajax(
+        "/interactive-heartbeat/api/invitation-preferences",
+        { type: "PUT", data: { mode } },
+      );
+      this.invitationPreferences = this.decoratePreferenceResponse(response);
+      this.notice = t("interactive_heartbeat.invitation_preferences.saved");
+      await this.load({ historyAll: this.history?.expanded === true });
+    } catch (error) {
+      this.invitationPreferencesError = errorMessage(
+        error,
+        t("interactive_heartbeat.errors.invitation_preferences_save_failed"),
+      );
+    } finally {
+      this.savingInvitationMode = false;
+    }
+  }
+
+  @action
+  updateInvitationSearch(kind, event) {
+    const value = event.target.value;
+    const approved = kind === "approved";
+    if (approved) {
+      this.approvedQuery = value;
+      this.approvedSelectedUser = null;
+      window.clearTimeout(this.approvedSearchTimer);
+    } else {
+      this.blockedQuery = value;
+      this.blockedSelectedUser = null;
+      window.clearTimeout(this.blockedSearchTimer);
+    }
+
+    const query = value.trim();
+    if (query.length < 2) {
+      if (approved) {
+        this.approvedSuggestions = [];
+        this.approvedSearching = false;
+      } else {
+        this.blockedSuggestions = [];
+        this.blockedSearching = false;
+      }
+      return;
+    }
+
+    const sequence = approved
+      ? ++this.approvedSearchSequence
+      : ++this.blockedSearchSequence;
+    if (approved) {
+      this.approvedSearching = true;
+    } else {
+      this.blockedSearching = true;
+    }
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await ajax("/interactive-heartbeat/api/users", {
+          data: { q: query, purpose: "invitation_preferences" },
+        });
+        const existingIds = new Set(
+          (approved ? this.approvedMembers : this.blockedMembers).map(
+            (user) => user.id,
+          ),
+        );
+        const suggestions = (response?.users || [])
+          .filter((user) => !existingIds.has(user.id))
+          .map((user) => ({
+            ...user,
+            avatar_url: avatarUrl(user, 48),
+          }));
+        if (approved && sequence === this.approvedSearchSequence) {
+          this.approvedSuggestions = suggestions;
+        } else if (!approved && sequence === this.blockedSearchSequence) {
+          this.blockedSuggestions = suggestions;
+        }
+      } catch (error) {
+        this.invitationPreferencesError = errorMessage(
+          error,
+          t("interactive_heartbeat.errors.user_search_failed"),
+        );
+      } finally {
+        if (approved && sequence === this.approvedSearchSequence) {
+          this.approvedSearching = false;
+        } else if (!approved && sequence === this.blockedSearchSequence) {
+          this.blockedSearching = false;
+        }
+      }
+    }, 250);
+
+    if (approved) {
+      this.approvedSearchTimer = timer;
+    } else {
+      this.blockedSearchTimer = timer;
+    }
+  }
+
+  @action
+  selectInvitationUser(kind, user) {
+    if (kind === "approved") {
+      this.approvedSelectedUser = user;
+      this.approvedQuery = user.username;
+      this.approvedSuggestions = [];
+    } else {
+      this.blockedSelectedUser = user;
+      this.blockedQuery = user.username;
+      this.blockedSuggestions = [];
+    }
+  }
+
+  @action
+  async addInvitationMember(kind) {
+    const approved = kind === "approved";
+    const user = approved ? this.approvedSelectedUser : this.blockedSelectedUser;
+    if (!user || (approved ? this.approvedSaving : this.blockedSaving)) {
+      return;
+    }
+
+    if (approved) {
+      this.approvedSaving = true;
+    } else {
+      this.blockedSaving = true;
+    }
+    this.invitationPreferencesError = null;
+    try {
+      const response = await ajax(
+        "/interactive-heartbeat/api/invitation-preferences/members",
+        { type: "POST", data: { username: user.username, kind } },
+      );
+      this.invitationPreferences = this.decoratePreferenceResponse(response);
+      if (approved) {
+        this.approvedQuery = "";
+        this.approvedSelectedUser = null;
+        this.approvedSuggestions = [];
+      } else {
+        this.blockedQuery = "";
+        this.blockedSelectedUser = null;
+        this.blockedSuggestions = [];
+      }
+      this.notice = t(
+        approved
+          ? "interactive_heartbeat.invitation_preferences.approved_added"
+          : "interactive_heartbeat.invitation_preferences.blocked_added",
+      );
+      await this.load({ historyAll: this.history?.expanded === true });
+    } catch (error) {
+      this.invitationPreferencesError = errorMessage(
+        error,
+        t("interactive_heartbeat.errors.invitation_member_save_failed"),
+      );
+    } finally {
+      if (approved) {
+        this.approvedSaving = false;
+      } else {
+        this.blockedSaving = false;
+      }
+    }
+  }
+
+  @action
+  async removeInvitationMember(kind, user) {
+    this.invitationPreferencesError = null;
+    try {
+      const response = await ajax(
+        `/interactive-heartbeat/api/invitation-preferences/members/${user.id}`,
+        { type: "DELETE", data: { kind } },
+      );
+      this.invitationPreferences = this.decoratePreferenceResponse(response);
+      this.notice = t("interactive_heartbeat.invitation_preferences.member_removed");
+    } catch (error) {
+      this.invitationPreferencesError = errorMessage(
+        error,
+        t("interactive_heartbeat.errors.invitation_member_remove_failed"),
+      );
     }
   }
 
@@ -480,6 +758,166 @@ export default class InteractiveHeartbeatPage extends Component {
               {{t "interactive_heartbeat.overview.create_and_allow"}}
             {{/if}}
           </button>
+        </section>
+
+        <section class="interactive-heartbeat__card interactive-heartbeat__invitation-preferences">
+          <div class="interactive-heartbeat__card-header">
+            <div>
+              <h2>{{t "interactive_heartbeat.invitation_preferences.title"}}</h2>
+              <p>{{t "interactive_heartbeat.invitation_preferences.help"}}</p>
+            </div>
+          </div>
+
+          {{#if this.invitationPreferencesError}}
+            <div class="interactive-heartbeat__alert interactive-heartbeat__alert--error" role="alert">
+              {{this.invitationPreferencesError}}
+            </div>
+          {{/if}}
+
+          {{#if this.invitationPreferencesLoading}}
+            <p>{{t "interactive_heartbeat.loading"}}</p>
+          {{else if this.invitationPreferences}}
+            <fieldset class="interactive-heartbeat__choice-fieldset" disabled={{this.savingInvitationMode}}>
+              <legend>{{t "interactive_heartbeat.invitation_preferences.who_can_invite"}}</legend>
+              <div class="interactive-heartbeat__choice-grid interactive-heartbeat__choice-grid--preference-modes" role="radiogroup">
+                {{#each this.invitationModeOptions as |option|}}
+                  <label class="interactive-heartbeat__choice">
+                    <input
+                      type="radio"
+                      name="interactive-heartbeat-invitation-mode"
+                      value={{option.value}}
+                      checked={{option.selected}}
+                      {{on "change" (fn this.updateInvitationMode option.value)}}
+                    />
+                    <span class="interactive-heartbeat__choice-content">
+                      <strong>{{option.label}}</strong>
+                      <small>{{option.description}}</small>
+                    </span>
+                  </label>
+                {{/each}}
+              </div>
+            </fieldset>
+
+            {{#if this.approvedOnlyMode}}
+              <section class="interactive-heartbeat__preference-list-section">
+                <div class="interactive-heartbeat__preference-list-header">
+                  <div>
+                    <h3>{{t "interactive_heartbeat.invitation_preferences.approved_title"}}</h3>
+                    <p>{{t "interactive_heartbeat.invitation_preferences.approved_help"}}</p>
+                  </div>
+                </div>
+                <div class="interactive-heartbeat__preference-search-row">
+                  <label class="interactive-heartbeat__field">
+                    <span>{{t "interactive_heartbeat.invitation_preferences.search_member"}}</span>
+                    <input
+                      type="text"
+                      value={{this.approvedQuery}}
+                      placeholder={{t "interactive_heartbeat.invitation_preferences.search_placeholder"}}
+                      autocomplete="off"
+                      {{on "input" (fn this.updateInvitationSearch "approved")}}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    disabled={{this.approvedAddDisabled}}
+                    {{on "click" (fn this.addInvitationMember "approved")}}
+                  >
+                    {{t "interactive_heartbeat.invitation_preferences.add"}}
+                  </button>
+                </div>
+                {{#if this.approvedSearching}}
+                  <p class="interactive-heartbeat__muted">{{t "interactive_heartbeat.invitation_preferences.searching"}}</p>
+                {{/if}}
+                {{#if this.approvedSuggestions.length}}
+                  <div class="interactive-heartbeat__suggestions" role="listbox">
+                    {{#each this.approvedSuggestions as |user|}}
+                      <button type="button" class="interactive-heartbeat__suggestion" {{on "click" (fn this.selectInvitationUser "approved" user)}}>
+                        <img src={{user.avatar_url}} alt="" />
+                        <span><strong>{{user.username}}</strong>{{#if user.name}}<small>{{user.name}}</small>{{/if}}</span>
+                      </button>
+                    {{/each}}
+                  </div>
+                {{/if}}
+                {{#if this.approvedMembers.length}}
+                  <div class="interactive-heartbeat__preference-member-list">
+                    {{#each this.approvedMembers as |user|}}
+                      <article class="interactive-heartbeat__preference-member-row">
+                        <div class="interactive-heartbeat__member">
+                          <img src={{user.avatar_url}} alt="" />
+                          <strong>{{user.username}}</strong>
+                        </div>
+                        <button type="button" class="btn" {{on "click" (fn this.removeInvitationMember "approved" user)}}>
+                          {{t "interactive_heartbeat.invitation_preferences.remove"}}
+                        </button>
+                      </article>
+                    {{/each}}
+                  </div>
+                {{else}}
+                  <p class="interactive-heartbeat__muted">{{t "interactive_heartbeat.invitation_preferences.no_approved"}}</p>
+                {{/if}}
+              </section>
+            {{/if}}
+
+            <section class="interactive-heartbeat__preference-list-section">
+              <div class="interactive-heartbeat__preference-list-header">
+                <div>
+                  <h3>{{t "interactive_heartbeat.invitation_preferences.blocked_title"}}</h3>
+                  <p>{{t "interactive_heartbeat.invitation_preferences.blocked_help"}}</p>
+                </div>
+              </div>
+              <div class="interactive-heartbeat__preference-search-row">
+                <label class="interactive-heartbeat__field">
+                  <span>{{t "interactive_heartbeat.invitation_preferences.search_member"}}</span>
+                  <input
+                    type="text"
+                    value={{this.blockedQuery}}
+                    placeholder={{t "interactive_heartbeat.invitation_preferences.search_placeholder"}}
+                    autocomplete="off"
+                    {{on "input" (fn this.updateInvitationSearch "blocked")}}
+                  />
+                </label>
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  disabled={{this.blockedAddDisabled}}
+                  {{on "click" (fn this.addInvitationMember "blocked")}}
+                >
+                  {{t "interactive_heartbeat.invitation_preferences.add"}}
+                </button>
+              </div>
+              {{#if this.blockedSearching}}
+                <p class="interactive-heartbeat__muted">{{t "interactive_heartbeat.invitation_preferences.searching"}}</p>
+              {{/if}}
+              {{#if this.blockedSuggestions.length}}
+                <div class="interactive-heartbeat__suggestions" role="listbox">
+                  {{#each this.blockedSuggestions as |user|}}
+                    <button type="button" class="interactive-heartbeat__suggestion" {{on "click" (fn this.selectInvitationUser "blocked" user)}}>
+                      <img src={{user.avatar_url}} alt="" />
+                      <span><strong>{{user.username}}</strong>{{#if user.name}}<small>{{user.name}}</small>{{/if}}</span>
+                    </button>
+                  {{/each}}
+                </div>
+              {{/if}}
+              {{#if this.blockedMembers.length}}
+                <div class="interactive-heartbeat__preference-member-list">
+                  {{#each this.blockedMembers as |user|}}
+                    <article class="interactive-heartbeat__preference-member-row">
+                      <div class="interactive-heartbeat__member">
+                        <img src={{user.avatar_url}} alt="" />
+                        <strong>{{user.username}}</strong>
+                      </div>
+                      <button type="button" class="btn" {{on "click" (fn this.removeInvitationMember "blocked" user)}}>
+                        {{t "interactive_heartbeat.invitation_preferences.remove"}}
+                      </button>
+                    </article>
+                  {{/each}}
+                </div>
+              {{else}}
+                <p class="interactive-heartbeat__muted">{{t "interactive_heartbeat.invitation_preferences.no_blocked"}}</p>
+              {{/if}}
+            </section>
+          {{/if}}
         </section>
 
         {{#if this.config.test_lab_enabled}}

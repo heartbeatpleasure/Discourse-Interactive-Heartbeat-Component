@@ -20,6 +20,10 @@ en:
       toy_required: "Accept the session mode, provide the required consent, and connect your Lovense toy before marking yourself ready."
       leader_required: "Select which participant is the leader for this mode."
       clear_completed_failed: "Completed sessions could not be removed from your list. Please try again."
+      invitation_preferences_load_failed: "Your invitation preferences could not be loaded."
+      invitation_preferences_save_failed: "Your invitation preference could not be saved."
+      invitation_member_save_failed: "The member could not be added to your invitation list."
+      invitation_member_remove_failed: "The member could not be removed from your invitation list."
     overview:
       new_session: "Start a private session"
       member: "Member"
@@ -53,6 +57,35 @@ en:
       open: "Open session"
       copy: "Copy invite link"
       copied: "Invite link copied."
+    invitation_preferences:
+      title: "Invitation preferences"
+      help: "Choose who may send you new Interactive Heartbeat invitations. These settings affect invitations you receive; you can still start a session yourself."
+      who_can_invite: "Who can invite me?"
+      saved: "Your invitation preference was saved."
+      add: "Add"
+      remove: "Remove"
+      searching: "Searching…"
+      search_member: "Member"
+      search_placeholder: "Search username or name"
+      approved_title: "Approved members"
+      approved_help: "Only members listed here can invite you while Approved members only is selected."
+      blocked_title: "Blocked members"
+      blocked_help: "These members cannot send you new Interactive Heartbeat invitations. They are not told that you blocked them."
+      no_approved: "No approved members have been added yet."
+      no_blocked: "No members are blocked from inviting you."
+      approved_added: "The member was added to your approved list."
+      blocked_added: "The member was blocked from sending new invitations."
+      member_removed: "The member was removed from your invitation list."
+      modes:
+        all_members:
+          label: "All members"
+          description: "Any eligible member may invite you, except members on your blocked list."
+        approved_members:
+          label: "Approved members only"
+          description: "Only members you add to your approved list may invite you."
+        nobody:
+          label: "Nobody"
+          description: "Do not accept any new Interactive Heartbeat invitations."
     session:
       private_session_label: "Private heartbeat session"
       title_with_user: "You and %{username}"
